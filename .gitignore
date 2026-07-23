@@ -1,0 +1,30 @@
+# dependencies
+node_modules/
+
+# build
+dist/
+openapi.json
+
+# env
+.env
+.env.local
+.env.*.local
+
+# logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# editor
+.vscode/*
+!.vscode/settings.json
+.idea/
+
+# os
+.DS_Store
+
+# testing
+coverage/
+
+# prisma
+prisma/*.db

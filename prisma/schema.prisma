@@ -1,0 +1,13 @@
+// Schema mínimo da Sessão 1 — apenas a fundação para o Prisma Client existir
+// e o /health poder testar a conexão real com o Neon. Os models de negócio
+// (Organization, User, Wallet, LedgerEntry, ...) entram na Sessão 2.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
