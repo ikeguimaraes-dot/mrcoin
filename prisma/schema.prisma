@@ -1,7 +1,3 @@
-// Schema mínimo da Sessão 1 — apenas a fundação para o Prisma Client existir
-// e o /health poder testar a conexão real com o Neon. Os models de negócio
-// (Organization, User, Wallet, LedgerEntry, ...) entram na Sessão 2.
-
 generator client {
   provider = "prisma-client-js"
 }
@@ -10,4 +6,407 @@ datasource db {
   provider  = "postgresql"
   url       = env("DATABASE_URL")
   directUrl = env("DIRECT_URL")
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Enums
+// ─────────────────────────────────────────────────────────────────────────
+
+enum OrganizationStatus {
+  ACTIVE
+  SUSPENDED
+  CANCELED
+}
+
+enum OrganizationPlan {
+  TRIAL
+  STANDARD
+  ENTERPRISE
+}
+
+enum AdminRole {
+  OWNER
+  MANAGER
+  OPERATOR
+  VIEWER
+}
+
+enum AdminUserStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum MembershipType {
+  CUSTOMER
+  EMPLOYEE
+}
+
+enum MembershipStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum BatchStatus {
+  PENDING
+  PAID
+  EXPIRED
+  CANCELED
+}
+
+enum LedgerEntryType {
+  CREDIT
+  DEBIT
+  REVERSAL
+  EXPIRE
+}
+
+enum LedgerReferenceType {
+  DISTRIBUTION
+  REDEMPTION
+  EXPIRATION
+  CAMPAIGN
+  MANUAL_ADJUSTMENT
+  REVERSAL
+}
+
+enum DistributionStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  COMPLETED_WITH_ERRORS
+}
+
+enum DistributionItemStatus {
+  PENDING
+  OK
+  FAILED
+}
+
+enum CampaignStatus {
+  DRAFT
+  ACTIVE
+  PAUSED
+  FINISHED
+}
+
+enum PartnerStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum OfferStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum RedemptionStatus {
+  PENDING
+  CONFIRMED
+  EXPIRED
+}
+
+enum SettlementStatus {
+  OPEN
+  CLOSED
+  PAID
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Modelos
+// ─────────────────────────────────────────────────────────────────────────
+
+/// Empresa cliente da plataforma. Compra lotes de coins e distribui para
+/// clientes ou funcionários. Fronteira do isolamento multi-tenant.
+model Organization {
+  id        String             @id @default(cuid())
+  name      String
+  cnpj      String             @unique
+  status    OrganizationStatus @default(ACTIVE)
+  plan      OrganizationPlan   @default(TRIAL)
+  createdAt DateTime           @default(now())
+  updatedAt DateTime           @updatedAt
+
+  adminUsers    AdminUser[]
+  memberships   Membership[]
+  coinBatches   CoinBatch[]
+  distributions Distribution[]
+  campaigns     Campaign[]
+  auditLogs     AuditLog[]
+}
+
+/// Usuário do painel administrativo (coins-admin) de uma organização.
+/// Hierarquia de papéis: OWNER > MANAGER > OPERATOR > VIEWER.
+model AdminUser {
+  id             String          @id @default(cuid())
+  organizationId String
+  organization   Organization    @relation(fields: [organizationId], references: [id])
+  name           String
+  email          String          @unique
+  passwordHash   String
+  role           AdminRole
+  mfaEnabled     Boolean         @default(false)
+  mfaSecret      String?
+  status         AdminUserStatus @default(ACTIVE)
+  lastLoginAt    DateTime?
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+
+  distributions Distribution[]
+  auditLogs     AuditLog[]
+
+  @@index([organizationId])
+}
+
+/// Usuário final (cliente ou funcionário), identificado por CPF. Não
+/// pertence diretamente a uma organização — o vínculo é via Membership,
+/// já que a mesma pessoa pode participar de várias empresas.
+model User {
+  id           String   @id @default(cuid())
+  cpfEncrypted String
+  cpfHash      String   @unique
+  name         String
+  phone        String?
+  email        String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  memberships Membership[]
+}
+
+/// Vínculo entre um User e uma Organization. Cada Membership tem sua
+/// própria Wallet — coins de organizações diferentes nunca se misturam.
+model Membership {
+  id             String           @id @default(cuid())
+  userId         String
+  user           User             @relation(fields: [userId], references: [id])
+  organizationId String
+  organization   Organization     @relation(fields: [organizationId], references: [id])
+  type           MembershipType
+  externalRef    String?
+  status         MembershipStatus @default(ACTIVE)
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+
+  wallet            Wallet?
+  distributionItems DistributionItem[]
+  redemptions       Redemption[]
+
+  @@unique([userId, organizationId])
+  @@index([organizationId])
+}
+
+/// Carteira de coins de um Membership. `cachedBalance` e `version` só
+/// podem ser alterados pelo LedgerService, dentro de uma transação.
+model Wallet {
+  id            String     @id @default(cuid())
+  membershipId  String     @unique
+  membership    Membership @relation(fields: [membershipId], references: [id])
+  cachedBalance Int        @default(0)
+  version       Int        @default(0)
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+
+  ledgerEntries LedgerEntry[]
+  redemptions   Redemption[]
+}
+
+/// Movimentação imutável de coins. Nunca é atualizada nem apagada —
+/// correções são um novo entry do tipo REVERSAL. Cadeia de hash
+/// (`prevHash` → `hash`) garante integridade sequencial por carteira.
+model LedgerEntry {
+  id             String              @id @default(cuid())
+  walletId       String
+  wallet         Wallet              @relation(fields: [walletId], references: [id])
+  type           LedgerEntryType
+  amount         Int
+  balanceAfter   Int
+  idempotencyKey String              @unique
+  referenceType  LedgerReferenceType
+  referenceId    String
+  batchId        String?
+  batch          CoinBatch?          @relation(fields: [batchId], references: [id])
+  description    String
+  prevHash       String
+  hash           String
+  reversalOfId   String?
+  reversalOf     LedgerEntry?        @relation("LedgerEntryReversal", fields: [reversalOfId], references: [id])
+  reversals      LedgerEntry[]       @relation("LedgerEntryReversal")
+  createdAt      DateTime            @default(now())
+
+  @@index([walletId, createdAt])
+  @@index([batchId])
+}
+
+/// Lote de coins comprado por uma organização. Consumido em ordem FIFO
+/// (por `expiresAt`) nas distribuições e na expiração diária.
+model CoinBatch {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  totalCoins     Int
+  remainingCoins Int
+  priceInCents   Int
+  status         BatchStatus  @default(PENDING)
+  expiresAt      DateTime
+  pspChargeId    String?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  ledgerEntries LedgerEntry[]
+
+  @@index([organizationId, expiresAt])
+}
+
+/// Uma operação de distribuição de coins — individual (csvFileUrl nulo)
+/// ou em massa via CSV — disparada por um AdminUser.
+model Distribution {
+  id             String             @id @default(cuid())
+  organizationId String
+  organization   Organization       @relation(fields: [organizationId], references: [id])
+  adminUserId    String
+  adminUser      AdminUser          @relation(fields: [adminUserId], references: [id])
+  csvFileUrl     String?
+  totalItems     Int                @default(0)
+  successItems   Int                @default(0)
+  failedItems    Int                @default(0)
+  status         DistributionStatus @default(PENDING)
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
+
+  items DistributionItem[]
+
+  @@index([organizationId])
+}
+
+/// Uma linha de uma Distribution (um CPF + valor). `membershipId` só é
+/// preenchido quando o CPF é resolvido com sucesso.
+model DistributionItem {
+  id             String                 @id @default(cuid())
+  distributionId String
+  distribution   Distribution           @relation(fields: [distributionId], references: [id])
+  membershipId   String?
+  membership     Membership?            @relation(fields: [membershipId], references: [id])
+  amount         Int
+  status         DistributionItemStatus @default(PENDING)
+  errorReason    String?
+  ledgerEntryId  String?
+  createdAt      DateTime               @default(now())
+
+  @@index([distributionId])
+}
+
+/// Motor de regras de recompensa automática de uma organização
+/// (gatilho → recompensa → público → orçamento → período).
+model Campaign {
+  id                 String         @id @default(cuid())
+  organizationId     String
+  organization       Organization   @relation(fields: [organizationId], references: [id])
+  name               String
+  rules              Json
+  budgetTotalInCoins Int
+  budgetSpentInCoins Int            @default(0)
+  status             CampaignStatus @default(DRAFT)
+  startsAt           DateTime
+  endsAt             DateTime
+  createdAt          DateTime       @default(now())
+  updatedAt          DateTime       @updatedAt
+
+  @@index([organizationId])
+}
+
+/// Parceiro da rede de resgate — compartilhado por todas as organizações
+/// da plataforma (não pertence a uma Organization específica).
+model Partner {
+  id          String        @id @default(cuid())
+  name        String
+  cnpj        String        @unique
+  category    String
+  takeRateBps Int
+  pixKey      String
+  latitude    Float?
+  longitude   Float?
+  status      PartnerStatus @default(ACTIVE)
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  offers      Offer[]
+  redemptions Redemption[]
+  settlements Settlement[]
+}
+
+/// Oferta de resgate de um Partner, exibida no catálogo do coins-app.
+model Offer {
+  id          String      @id @default(cuid())
+  partnerId   String
+  partner     Partner     @relation(fields: [partnerId], references: [id])
+  title       String
+  description String
+  category    String
+  status      OfferStatus @default(ACTIVE)
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  redemptions Redemption[]
+
+  @@index([partnerId])
+}
+
+/// Resgate de coins num parceiro. Criar um Redemption NÃO move coins —
+/// o débito só acontece na confirmação (`ledgerEntryId` setado nesse momento).
+model Redemption {
+  id            String           @id @default(cuid())
+  membershipId  String
+  membership    Membership       @relation(fields: [membershipId], references: [id])
+  walletId      String
+  wallet        Wallet           @relation(fields: [walletId], references: [id])
+  partnerId     String
+  partner       Partner          @relation(fields: [partnerId], references: [id])
+  offerId       String?
+  offer         Offer?           @relation(fields: [offerId], references: [id])
+  amount        Int
+  code          String           @unique
+  qrPayload     String
+  status        RedemptionStatus @default(PENDING)
+  expiresAt     DateTime
+  confirmedAt   DateTime?
+  ledgerEntryId String?
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+
+  @@index([status, expiresAt])
+}
+
+/// Fechamento periódico (semanal) dos resgates confirmados de um parceiro,
+/// com o repasse líquido calculado a partir do takeRate.
+model Settlement {
+  id            String           @id @default(cuid())
+  partnerId     String
+  partner       Partner          @relation(fields: [partnerId], references: [id])
+  periodStart   DateTime
+  periodEnd     DateTime
+  grossInCents  Int
+  takeRateBps   Int
+  netInCents    Int
+  status        SettlementStatus @default(OPEN)
+  pixReceiptUrl String?
+  paidAt        DateTime?
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+
+  @@unique([partnerId, periodStart, periodEnd])
+}
+
+/// Registro de toda escrita feita por um AdminUser — actor, ação, payload e IP.
+model AuditLog {
+  id               String       @id @default(cuid())
+  organizationId   String
+  organization     Organization @relation(fields: [organizationId], references: [id])
+  actorAdminUserId String
+  actorAdminUser   AdminUser    @relation(fields: [actorAdminUserId], references: [id])
+  action           String
+  payload          Json
+  ip               String
+  createdAt        DateTime     @default(now())
+
+  @@index([organizationId, createdAt])
 }
