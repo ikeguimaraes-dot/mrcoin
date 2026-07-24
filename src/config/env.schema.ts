@@ -7,6 +7,10 @@ export const envSchema = z.object({
   DIRECT_URL: z.string().url(),
   CPF_ENCRYPTION_KEY: z.string().regex(/^[0-9a-f]{64}$/i, 'deve ter 32 bytes em hex (64 caracteres)'),
   CPF_HASH_SECRET: z.string().min(32),
+  REDIS_URL: z
+    .string()
+    .url()
+    .regex(/^rediss:\/\//, 'Upstash exige TLS — use o esquema rediss://'),
 });
 
 export type Env = z.infer<typeof envSchema>;

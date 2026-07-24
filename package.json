@@ -22,12 +22,15 @@
     "gen:openapi": "ts-node -r tsconfig-paths/register src/openapi-gen.ts"
   },
   "dependencies": {
+    "@nestjs/bullmq": "^11.0.4",
     "@nestjs/common": "^11.0.0",
     "@nestjs/config": "^4.0.0",
     "@nestjs/core": "^11.0.0",
     "@nestjs/platform-express": "^11.0.0",
     "@nestjs/swagger": "^8.0.0",
     "@prisma/client": "^6.0.0",
+    "bullmq": "^5.80.12",
+    "ioredis": "^5.11.1",
     "reflect-metadata": "^0.2.0",
     "rxjs": "^7.8.0",
     "zod": "^3.24.0"

@@ -111,6 +111,17 @@ enum SettlementStatus {
   PAID
 }
 
+enum JobName {
+  RECONCILE_BALANCES
+  VERIFY_HASH_CHAIN
+}
+
+enum JobRunStatus {
+  RUNNING
+  SUCCESS
+  FAILED
+}
+
 // ─────────────────────────────────────────────────────────────────────────
 // Modelos
 // ─────────────────────────────────────────────────────────────────────────
@@ -409,4 +420,19 @@ model AuditLog {
   createdAt        DateTime     @default(now())
 
   @@index([organizationId, createdAt])
+}
+
+/// Histórico de execuções dos jobs agendados (auditoria/painel admin).
+/// Escrito exclusivamente pelos próprios jobs — nunca pela API pública.
+model JobRun {
+  id          String       @id @default(cuid())
+  jobName     JobName
+  status      JobRunStatus @default(RUNNING)
+  startedAt   DateTime     @default(now())
+  finishedAt  DateTime?
+  issuesFound Int          @default(0)
+  details     Json?
+
+  @@index([jobName, startedAt])
+  @@index([status])
 }
