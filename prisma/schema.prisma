@@ -164,6 +164,7 @@ model AdminUser {
 
   distributions Distribution[]
   auditLogs     AuditLog[]
+  refreshTokens RefreshToken[]
 
   @@index([organizationId])
 }
@@ -435,4 +436,25 @@ model JobRun {
 
   @@index([jobName, startedAt])
   @@index([status])
+}
+
+/// Refresh token de AdminUser — nunca armazenado em claro, só o hash (sha256).
+/// `family` agrupa uma cadeia de rotação: nasce nova a cada login, persiste entre
+/// rotações. Reuso de um token já revogado (`revokedAt` setado) indica token roubado —
+/// derruba a family inteira.
+model RefreshToken {
+  id           String    @id @default(cuid())
+  adminUserId  String
+  adminUser    AdminUser @relation(fields: [adminUserId], references: [id])
+  tokenHash    String    @unique
+  family       String
+  replacedById String?   @unique
+  revokedAt    DateTime?
+  expiresAt    DateTime
+  createdAt    DateTime  @default(now())
+  ip           String?
+  userAgent    String?
+
+  @@index([adminUserId])
+  @@index([family])
 }

@@ -11,6 +11,8 @@ export const envSchema = z.object({
     .string()
     .url()
     .regex(/^rediss:\/\//, 'Upstash exige TLS — use o esquema rediss://'),
+  JWT_ACCESS_SECRET: z.string().min(32),
+  MFA_ENCRYPTION_KEY: z.string().regex(/^[0-9a-f]{64}$/i, 'deve ter 32 bytes em hex (64 caracteres)'),
 });
 
 export type Env = z.infer<typeof envSchema>;

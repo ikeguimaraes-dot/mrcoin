@@ -1,11 +1,12 @@
 import { AdminRole, MembershipType, PrismaClient } from '@prisma/client';
 import { encryptCpf, hashCpf } from '../src/common/crypto/cpf-crypto.util';
+import { hashPassword } from '../src/modules/auth/password.util';
 import { generateFakeCpf } from './cpf.fixture';
 
 const prisma = new PrismaClient();
 
-const SEED_PASSWORD_PLACEHOLDER =
-  'SEED_ONLY_NOT_A_REAL_HASH — defina uma senha real via o fluxo de auth (Sessão 5)';
+/** Só para dev local — troque numa conta real antes de qualquer coisa que não seja seed. */
+const SEED_ADMIN_PASSWORD = 'DevPassword123!';
 
 const USERS_COUNT = 20;
 
@@ -52,14 +53,16 @@ async function seedOrganization() {
 }
 
 async function seedAdminUser(organizationId: string) {
+  const passwordHash = await hashPassword(SEED_ADMIN_PASSWORD);
+
   return prisma.adminUser.upsert({
     where: { email: 'owner@coins-piloto.com.br' },
-    update: {},
+    update: { passwordHash },
     create: {
       organizationId,
       name: 'Owner Piloto',
       email: 'owner@coins-piloto.com.br',
-      passwordHash: SEED_PASSWORD_PLACEHOLDER,
+      passwordHash,
       role: AdminRole.OWNER,
     },
   });
@@ -145,6 +148,7 @@ async function main() {
     organization: organization.name,
     users: USERS_COUNT,
     partners: PARTNERS.length,
+    adminLogin: { email: 'owner@coins-piloto.com.br', password: SEED_ADMIN_PASSWORD },
   });
 }
 

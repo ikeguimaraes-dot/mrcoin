@@ -1,14 +1,12 @@
-import { createCipheriv, createDecipheriv, createHmac, randomBytes } from 'node:crypto';
+import { createHmac } from 'node:crypto';
+import { decryptWithKey, encryptWithKey } from './aes-gcm.util';
 
-const ALGORITHM = 'aes-256-gcm';
-const IV_LENGTH_BYTES = 12;
-
-function getEncryptionKey(): Buffer {
+function getEncryptionKey(): string {
   const hex = process.env.CPF_ENCRYPTION_KEY;
   if (!hex) {
     throw new Error('CPF_ENCRYPTION_KEY não definida no ambiente');
   }
-  return Buffer.from(hex, 'hex');
+  return hex;
 }
 
 function getHashSecret(): string {
@@ -21,32 +19,12 @@ function getHashSecret(): string {
 
 /** Criptografa o CPF em repouso (AES-256-GCM). Formato: iv:ciphertext:authTag, tudo em hex. */
 export function encryptCpf(cpf: string): string {
-  const key = getEncryptionKey();
-  const iv = randomBytes(IV_LENGTH_BYTES);
-  const cipher = createCipheriv(ALGORITHM, key, iv);
-  const ciphertext = Buffer.concat([cipher.update(cpf, 'utf8'), cipher.final()]);
-  const authTag = cipher.getAuthTag();
-
-  return [iv, ciphertext, authTag].map((buffer) => buffer.toString('hex')).join(':');
+  return encryptWithKey(cpf, getEncryptionKey());
 }
 
 /** Reverte encryptCpf. Não é usado pelo seed, mas fica junto por ser a mesma fronteira de criptografia. */
 export function decryptCpf(encrypted: string): string {
-  const [ivHex, ciphertextHex, authTagHex] = encrypted.split(':');
-  if (!ivHex || !ciphertextHex || !authTagHex) {
-    throw new Error('Formato inválido de CPF criptografado');
-  }
-
-  const key = getEncryptionKey();
-  const decipher = createDecipheriv(ALGORITHM, key, Buffer.from(ivHex, 'hex'));
-  decipher.setAuthTag(Buffer.from(authTagHex, 'hex'));
-
-  const plaintext = Buffer.concat([
-    decipher.update(Buffer.from(ciphertextHex, 'hex')),
-    decipher.final(),
-  ]);
-
-  return plaintext.toString('utf8');
+  return decryptWithKey(encrypted, getEncryptionKey());
 }
 
 /** HMAC-SHA256 do CPF, usado como coluna buscável (cpfHash) sem expor o valor em claro. */
