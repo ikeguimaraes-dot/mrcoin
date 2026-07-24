@@ -17,5 +17,6 @@ import { MfaSetupGuard } from './guards/mfa-setup.guard';
     MfaChallengeGuard,
     MfaSetupGuard,
   ],
+  exports: [TokenService],
 })
 export class AuthModule {}

@@ -4,7 +4,7 @@ import { AdminRole } from '@prisma/client';
 import { Request } from 'express';
 import { ROLES_KEY } from '../decorators/roles.decorator';
 
-const ROLE_RANK: Record<AdminRole, number> = {
+export const ROLE_RANK: Record<AdminRole, number> = {
   VIEWER: 1,
   OPERATOR: 2,
   MANAGER: 3,

@@ -143,6 +143,7 @@ model Organization {
   distributions Distribution[]
   campaigns     Campaign[]
   auditLogs     AuditLog[]
+  adminInvites  AdminInvite[]
 }
 
 /// Usuário do painel administrativo (coins-admin) de uma organização.
@@ -165,6 +166,7 @@ model AdminUser {
   distributions Distribution[]
   auditLogs     AuditLog[]
   refreshTokens RefreshToken[]
+  sentInvites   AdminInvite[]
 
   @@index([organizationId])
 }
@@ -421,6 +423,26 @@ model AuditLog {
   createdAt        DateTime     @default(now())
 
   @@index([organizationId, createdAt])
+}
+
+/// Convite pendente de um AdminUser. Só vira AdminUser de fato no aceite (define senha) —
+/// evita ter que tornar passwordHash nullable pra representar o estado "convidado".
+model AdminInvite {
+  id                   String       @id @default(cuid())
+  organizationId       String
+  organization         Organization @relation(fields: [organizationId], references: [id])
+  email                String
+  role                 AdminRole
+  tokenHash            String       @unique
+  invitedByAdminUserId String
+  invitedByAdminUser   AdminUser    @relation(fields: [invitedByAdminUserId], references: [id])
+  expiresAt            DateTime
+  acceptedAt           DateTime?
+  revokedAt            DateTime?
+  createdAt            DateTime     @default(now())
+
+  @@index([organizationId])
+  @@index([email])
 }
 
 /// Histórico de execuções dos jobs agendados (auditoria/painel admin).
