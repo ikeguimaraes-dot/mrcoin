@@ -1,0 +1,234 @@
+import { randomInt, randomUUID } from 'node:crypto';
+import type { Server } from 'node:http';
+import { INestApplication } from '@nestjs/common';
+import { JwtService } from '@nestjs/jwt';
+import { Test } from '@nestjs/testing';
+import request from 'supertest';
+import { AppModule } from '../../app.module';
+import { PrismaService } from '../../prisma/prisma.service';
+import { encryptCpf, hashCpf } from '../../common/crypto/cpf-crypto.util';
+import { LedgerService } from '../ledger/ledger.service';
+
+interface ExpiringBatchBody {
+  batchId: string;
+  amount: number;
+}
+
+interface WalletResponseBody {
+  cachedBalance: number;
+  expiring: ExpiringBatchBody[];
+}
+
+interface EntryBody {
+  id: string;
+}
+
+interface EntriesResponseBody {
+  items: EntryBody[];
+  nextCursor: string | null;
+}
+
+interface ErrorResponseBody {
+  code: string;
+}
+
+const prisma = new PrismaService();
+const jwtService = new JwtService({ secret: process.env.JWT_ACCESS_SECRET });
+const ledgerService = new LedgerService(prisma);
+
+const createdOrgIds: string[] = [];
+const createdUserIds: string[] = [];
+
+let app: INestApplication;
+let server: Server;
+
+function randomCpf(): string {
+  return randomInt(10_000_000_000, 100_000_000_000).toString();
+}
+
+function tokenFor(userId: string): Promise<string> {
+  return jwtService.signAsync({ sub: userId, type: 'user' });
+}
+
+async function createOrg(): Promise<{ id: string }> {
+  const suffix = randomUUID();
+  const organization = await prisma.organization.create({
+    data: { name: `Wallet Test Org ${suffix}`, cnpj: suffix.replace(/-/g, '').slice(0, 14) },
+  });
+  createdOrgIds.push(organization.id);
+  return organization;
+}
+
+async function createUserWithWallet(organizationId: string): Promise<{ userId: string; walletId: string }> {
+  const cpf = randomCpf();
+  const suffix = randomUUID();
+  const user = await prisma.user.create({
+    data: {
+      cpfEncrypted: encryptCpf(cpf),
+      cpfHash: hashCpf(cpf),
+      name: `Wallet Test User ${suffix}`,
+      email: `wallet-test-${suffix}@test.coins-api.dev`,
+    },
+  });
+  createdUserIds.push(user.id);
+
+  const membership = await prisma.membership.create({
+    data: { userId: user.id, organizationId, type: 'CUSTOMER' },
+  });
+  const wallet = await prisma.wallet.create({ data: { membershipId: membership.id } });
+
+  return { userId: user.id, walletId: wallet.id };
+}
+
+beforeAll(async () => {
+  const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
+  app = moduleRef.createNestApplication();
+  await app.init();
+  server = app.getHttpServer() as Server;
+}, 30000);
+
+afterAll(async () => {
+  await app.close();
+  const memberships = await prisma.membership.findMany({ where: { userId: { in: createdUserIds } } });
+  const walletIds = (
+    await prisma.wallet.findMany({ where: { membershipId: { in: memberships.map((m) => m.id) } } })
+  ).map((w) => w.id);
+  await prisma.ledgerEntry.deleteMany({ where: { walletId: { in: walletIds } } });
+  await prisma.wallet.deleteMany({ where: { id: { in: walletIds } } });
+  await prisma.membership.deleteMany({ where: { userId: { in: createdUserIds } } });
+  await prisma.coinBatch.deleteMany({ where: { organizationId: { in: createdOrgIds } } });
+  await prisma.user.deleteMany({ where: { id: { in: createdUserIds } } });
+  await prisma.organization.deleteMany({ where: { id: { in: createdOrgIds } } });
+  await prisma.$disconnect();
+});
+
+describe('GET /wallet', () => {
+  it('saldo bate com cachedBalance e "coins a expirar" reflete o batch com saldo positivo', async () => {
+    const org = await createOrg();
+    const { userId, walletId } = await createUserWithWallet(org.id);
+
+    const batch = await prisma.coinBatch.create({
+      data: {
+        organizationId: org.id,
+        totalCoins: 1000,
+        remainingCoins: 1000,
+        priceInCents: 100000,
+        expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+      },
+    });
+
+    await ledgerService.post({
+      walletId,
+      type: 'CREDIT',
+      amount: 500,
+      referenceType: 'DISTRIBUTION',
+      referenceId: randomUUID(),
+      description: 'Distribuição inicial',
+      batchId: batch.id,
+      idempotencyKey: randomUUID(),
+    });
+    await ledgerService.post({
+      walletId,
+      type: 'DEBIT',
+      amount: 150,
+      referenceType: 'REDEMPTION',
+      referenceId: randomUUID(),
+      description: 'Resgate',
+      batchId: batch.id,
+      idempotencyKey: randomUUID(),
+    });
+
+    const token = await tokenFor(userId);
+    const response = await request(server)
+      .get('/wallet')
+      .query({ organizationId: org.id })
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+
+    const body = response.body as WalletResponseBody;
+    expect(body.cachedBalance).toBe(350);
+    expect(body.expiring).toHaveLength(1);
+    expect(body.expiring[0]?.batchId).toBe(batch.id);
+    expect(body.expiring[0]?.amount).toBe(350);
+  });
+
+  it('usuário sem Membership na organização recebe MEMBERSHIP_NOT_FOUND', async () => {
+    const orgA = await createOrg();
+    const orgB = await createOrg();
+    const { userId } = await createUserWithWallet(orgA.id);
+    const token = await tokenFor(userId);
+
+    const response = await request(server)
+      .get('/wallet')
+      .query({ organizationId: orgB.id })
+      .set('Authorization', `Bearer ${token}`)
+      .expect(404);
+
+    expect((response.body as ErrorResponseBody).code).toBe('MEMBERSHIP_NOT_FOUND');
+  });
+
+  it('usuário nunca acessa a wallet de outro usuário na mesma organização', async () => {
+    const org = await createOrg();
+    const userA = await createUserWithWallet(org.id);
+    const userB = await createUserWithWallet(org.id);
+
+    await ledgerService.post({
+      walletId: userA.walletId,
+      type: 'CREDIT',
+      amount: 999,
+      referenceType: 'MANUAL_ADJUSTMENT',
+      referenceId: randomUUID(),
+      description: 'Ajuste em A',
+      idempotencyKey: randomUUID(),
+    });
+
+    const tokenB = await tokenFor(userB.userId);
+    const response = await request(server)
+      .get('/wallet')
+      .query({ organizationId: org.id })
+      .set('Authorization', `Bearer ${tokenB}`)
+      .expect(200);
+
+    expect((response.body as WalletResponseBody).cachedBalance).toBe(0);
+  });
+});
+
+describe('GET /wallet/entries', () => {
+  it('pagina por cursor', async () => {
+    const org = await createOrg();
+    const { userId, walletId } = await createUserWithWallet(org.id);
+
+    for (let i = 0; i < 3; i += 1) {
+      await ledgerService.post({
+        walletId,
+        type: 'CREDIT',
+        amount: 10,
+        referenceType: 'MANUAL_ADJUSTMENT',
+        referenceId: randomUUID(),
+        description: `Entry ${i}`,
+        idempotencyKey: randomUUID(),
+      });
+    }
+
+    const token = await tokenFor(userId);
+    const firstPage = await request(server)
+      .get('/wallet/entries')
+      .query({ organizationId: org.id, limit: 2 })
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+
+    const firstBody = firstPage.body as EntriesResponseBody;
+    expect(firstBody.items).toHaveLength(2);
+    expect(firstBody.nextCursor).toBeTruthy();
+
+    const secondPage = await request(server)
+      .get('/wallet/entries')
+      .query({ organizationId: org.id, limit: 2, cursor: firstBody.nextCursor as string })
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+
+    const secondBody = secondPage.body as EntriesResponseBody;
+    expect(secondBody.items).toHaveLength(1);
+    expect(secondBody.nextCursor).toBeNull();
+  });
+});

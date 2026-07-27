@@ -137,13 +137,14 @@ model Organization {
   createdAt DateTime           @default(now())
   updatedAt DateTime           @updatedAt
 
-  adminUsers    AdminUser[]
-  memberships   Membership[]
-  coinBatches   CoinBatch[]
-  distributions Distribution[]
-  campaigns     Campaign[]
-  auditLogs     AuditLog[]
-  adminInvites  AdminInvite[]
+  adminUsers     AdminUser[]
+  memberships    Membership[]
+  coinBatches    CoinBatch[]
+  distributions  Distribution[]
+  campaigns      Campaign[]
+  auditLogs      AuditLog[]
+  adminInvites   AdminInvite[]
+  signupRequests UserSignupRequest[]
 }
 
 /// Usuário do painel administrativo (coins-admin) de uma organização.
@@ -185,6 +186,21 @@ model User {
   updatedAt    DateTime @updatedAt
 
   memberships Membership[]
+  devices     Device[]
+}
+
+/// Registro do celular de um User pra push notification — upsert por (userId, fingerprint),
+/// nunca duplica linha quando o mesmo aparelho reenvia (ex.: refresh de push token).
+model Device {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id])
+  fingerprint String
+  pushToken   String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([userId, fingerprint])
 }
 
 /// Vínculo entre um User e uma Organization. Cada Membership tem sua
@@ -207,6 +223,31 @@ model Membership {
 
   @@unique([userId, organizationId])
   @@index([organizationId])
+}
+
+/// Pedido de signup pendente — código OTP de 6 dígitos (hash), aguardando verificação.
+/// Só vira User+Membership+Wallet no verify; nunca cria User "parcial". Se o CPF já tem
+/// User, name/phone/email aqui são ignorados no verify (o OTP vai pro e-mail já cadastrado,
+/// nunca pro e-mail deste registro — ver AdminInvitesService/organizations pro mesmo padrão
+/// de "estado pendente em tabela própria" usado pra convite de admin).
+model UserSignupRequest {
+  id             String         @id @default(cuid())
+  cpfEncrypted   String
+  cpfHash        String
+  name           String
+  phone          String?
+  email          String
+  organizationId String
+  organization   Organization   @relation(fields: [organizationId], references: [id])
+  membershipType MembershipType
+  externalRef    String?
+  codeHash       String
+  attempts       Int            @default(0)
+  expiresAt      DateTime
+  consumedAt     DateTime?
+  createdAt      DateTime       @default(now())
+
+  @@index([cpfHash, organizationId])
 }
 
 /// Carteira de coins de um Membership. `cachedBalance` e `version` só

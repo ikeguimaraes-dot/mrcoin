@@ -15,6 +15,8 @@ import { LedgerModule } from './modules/ledger/ledger.module';
 import { JobsModule } from './modules/jobs/jobs.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { OrganizationsModule } from './modules/organizations/organizations.module';
+import { UsersModule } from './modules/users/users.module';
+import { WalletsModule } from './modules/wallets/wallets.module';
 
 @Module({
   imports: [
@@ -47,6 +49,8 @@ import { OrganizationsModule } from './modules/organizations/organizations.modul
     JobsModule,
     AuthModule,
     OrganizationsModule,
+    UsersModule,
+    WalletsModule,
   ],
   providers: [
     { provide: APP_FILTER, useClass: AllExceptionsFilter },

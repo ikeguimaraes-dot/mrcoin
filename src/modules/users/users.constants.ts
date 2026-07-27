@@ -1,0 +1,13 @@
+export const OTP_TTL_MINUTES = 10;
+export const OTP_MAX_ATTEMPTS = 5;
+export const OTP_CODE_LENGTH = 6;
+
+export const USER_ACCESS_TOKEN_TTL_DAYS = 30;
+
+/**
+ * Nunca corresponde a um User.id real (cuid) — usado só pra manter o número de round-trips
+ * ao banco igual em `requestOtp`, independente de o CPF já existir ou não. Sem isso, a
+ * ausência da query extra de Membership vaza "esse CPF existe?" por diferença de timing
+ * mesmo nos dois cenários que devolvem a mesma resposta HTTP.
+ */
+export const NON_EXISTENT_USER_ID_PLACEHOLDER = 'signup-otp-timing-guard-placeholder';

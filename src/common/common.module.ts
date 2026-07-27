@@ -5,6 +5,7 @@ import { PartnerJwtGuard } from './guards/partner-jwt.guard';
 import { RolesGuard } from './guards/roles.guard';
 import { TenantGuard } from './guards/tenant.guard';
 import { LoginRateLimitGuard } from './guards/login-rate-limit.guard';
+import { SignupRateLimitGuard } from './guards/signup-rate-limit.guard';
 import { EMAIL_PORT } from './email/email.port';
 import { ConsoleEmailAdapter } from './email/console-email.adapter';
 
@@ -18,6 +19,7 @@ import { ConsoleEmailAdapter } from './email/console-email.adapter';
     RolesGuard,
     TenantGuard,
     LoginRateLimitGuard,
+    SignupRateLimitGuard,
     { provide: EMAIL_PORT, useClass: ConsoleEmailAdapter },
   ],
   exports: [
@@ -27,6 +29,7 @@ import { ConsoleEmailAdapter } from './email/console-email.adapter';
     RolesGuard,
     TenantGuard,
     LoginRateLimitGuard,
+    SignupRateLimitGuard,
     EMAIL_PORT,
   ],
 })
