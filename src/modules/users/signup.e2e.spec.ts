@@ -5,7 +5,7 @@ import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import { AppModule } from '../../app.module';
 import { PrismaService } from '../../prisma/prisma.service';
-import { decryptCpf, hashCpf } from '../../common/crypto/cpf-crypto.util';
+import { decryptCpf, encryptCpf, hashCpf } from '../../common/crypto/cpf-crypto.util';
 import { EMAIL_PORT, EmailPort, SendEmailParams } from '../../common/email/email.port';
 import { createRedisConnection } from '../../common/redis/redis-connection.factory';
 
@@ -238,6 +238,80 @@ describe('Fluxo completo de signup', () => {
 
     expect((response.body as ErrorResponseBody).code).toBe('MEMBERSHIP_ALREADY_EXISTS');
     expect(capturedEmails.length).toBe(emailCountBefore);
+  });
+});
+
+describe('Claim de conta PENDING_CLAIM (criada por distribuição, sem contato verificado)', () => {
+  it('reivindica com o próprio e-mail, promove pra ACTIVE e preserva Membership/Wallet/saldo já creditado', async () => {
+    const org = await createOrg();
+    const cpf = randomCpf();
+    const cpfHash = hashCpf(cpf);
+
+    const pendingUser = await prisma.user.create({
+      data: {
+        cpfEncrypted: encryptCpf(cpf),
+        cpfHash,
+        name: 'Criado por Distribuição',
+        status: 'PENDING_CLAIM',
+      },
+    });
+    createdUserIds.push(pendingUser.id);
+
+    const membership = await prisma.membership.create({
+      data: { userId: pendingUser.id, organizationId: org.id, type: 'EMPLOYEE', externalRef: 'EMP-1' },
+    });
+    const wallet = await prisma.wallet.create({ data: { membershipId: membership.id, cachedBalance: 300 } });
+
+    const claimEmail = `claim-${randomUUID()}@test.coins-api.dev`;
+    const emailsBefore = capturedEmails.length;
+
+    // Não pode bloquear com MEMBERSHIP_ALREADY_EXISTS mesmo já existindo Membership pra essa
+    // org — é isso que caracteriza um claim (em vez de um novo signup).
+    await request(server)
+      .post('/users/signup')
+      .send({
+        cpf,
+        name: 'Nome Escolhido No Claim',
+        email: claimEmail,
+        organizationId: org.id,
+        membershipType: 'CUSTOMER',
+      })
+      .expect(200);
+
+    const sentAfterRequest = capturedEmails.slice(emailsBefore);
+    expect(sentAfterRequest.some((e) => e.to === claimEmail)).toBe(true);
+
+    const code = extractCode(claimEmail);
+    const verifyRes = await request(server)
+      .post('/users/signup/verify')
+      .send({ cpf, organizationId: org.id, code })
+      .expect(200);
+
+    const verifyBody = verifyRes.body as VerifyResponseBody;
+    expect(verifyBody.accessToken).toBeTruthy();
+
+    const promotedUser = await prisma.user.findUniqueOrThrow({ where: { id: pendingUser.id } });
+    expect(promotedUser.status).toBe('ACTIVE');
+    expect(promotedUser.email).toBe(claimEmail);
+
+    // Membership/Wallet são reaproveitados (mesmo id), não duplicados — e o membershipType
+    // definido na distribuição original não é sobrescrito pelo que a pessoa mandar no claim.
+    const membershipsAfter = await prisma.membership.findMany({
+      where: { userId: pendingUser.id, organizationId: org.id },
+    });
+    expect(membershipsAfter).toHaveLength(1);
+    expect(membershipsAfter[0]?.id).toBe(membership.id);
+    expect(membershipsAfter[0]?.type).toBe('EMPLOYEE');
+
+    const walletAfter = await prisma.wallet.findUniqueOrThrow({ where: { id: wallet.id } });
+    expect(walletAfter.cachedBalance).toBe(300);
+
+    const walletRes = await request(server)
+      .get('/wallet')
+      .query({ organizationId: org.id })
+      .set('Authorization', `Bearer ${verifyBody.accessToken}`)
+      .expect(200);
+    expect((walletRes.body as WalletResponseBody).cachedBalance).toBe(300);
   });
 });
 

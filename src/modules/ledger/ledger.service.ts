@@ -26,6 +26,7 @@ interface EntryCoreInput {
   referenceId: string;
   description: string;
   batchId: string | null;
+  distributionItemId: string | null;
   idempotencyKey: string;
   reversalOfId: string | null;
 }
@@ -60,6 +61,7 @@ export class LedgerService {
         referenceId: input.referenceId,
         description: input.description,
         batchId: input.batchId ?? null,
+        distributionItemId: input.distributionItemId ?? null,
         idempotencyKey: input.idempotencyKey,
         reversalOfId: null,
       },
@@ -91,6 +93,7 @@ export class LedgerService {
         referenceId: original.id,
         description: input.reason,
         batchId: original.batchId,
+        distributionItemId: original.distributionItemId,
         idempotencyKey: input.idempotencyKey,
         reversalOfId: original.id,
       },
@@ -211,6 +214,7 @@ export class LedgerService {
         referenceType: input.referenceType,
         referenceId: input.referenceId,
         batchId: input.batchId ?? undefined,
+        distributionItemId: input.distributionItemId ?? undefined,
         description: input.description,
         prevHash,
         hash,

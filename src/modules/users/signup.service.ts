@@ -27,8 +27,11 @@ export interface SignupSession {
 /**
  * Nenhum método aqui loga CPF ou código OTP em claro — só cpfHash/ids quando necessário.
  * O e-mail de destino do OTP nunca vem do corpo da requisição quando o CPF já tem User
- * cadastrado (ver decisão de segurança no plano da sessão): evita que alguém que só sabe o
- * CPF de terceiro sequestre a identidade digitando o próprio e-mail.
+ * ACTIVE (já reivindicado antes): evita que alguém que só sabe o CPF de terceiro sequestre
+ * a identidade digitando o próprio e-mail. Exceção deliberada: um User PENDING_CLAIM (criado
+ * por uma distribuição, sem nenhum contato verificado — ver módulo distributions) não tem
+ * e-mail confiável nenhum pra reusar, então o OTP vai pro e-mail que a própria pessoa está
+ * informando agora; é isso que prova posse do contato e promove a conta pra ACTIVE.
  */
 @Injectable()
 export class SignupService {
@@ -59,11 +62,11 @@ export class SignupService {
       },
     });
 
-    if (existingUser && existingMembership) {
+    if (existingUser && existingUser.status === 'ACTIVE' && existingMembership) {
       throw new MembershipAlreadyExistsException();
     }
 
-    const targetEmail = existingUser ? existingUser.email : input.email;
+    const targetEmail = existingUser && existingUser.status === 'ACTIVE' ? existingUser.email : input.email;
     if (!targetEmail) {
       throw new Error('Usuário existente sem e-mail cadastrado — estado inconsistente.');
     }
@@ -134,28 +137,48 @@ export class SignupService {
     }
 
     const { userId } = await this.prisma.$transaction(async (tx) => {
-      const user = await tx.user.upsert({
-        where: { cpfHash: pending.cpfHash },
-        create: {
-          cpfEncrypted: pending.cpfEncrypted,
-          cpfHash: pending.cpfHash,
-          name: pending.name,
-          phone: pending.phone,
-          email: pending.email,
-        },
-        update: {},
-      });
+      const existingUser = await tx.user.findUnique({ where: { cpfHash: pending.cpfHash } });
 
-      const membership = await tx.membership.create({
-        data: {
+      // PENDING_CLAIM: a conta já existe (criada por uma distribuição), mas sem contato
+      // verificado nenhum. Só agora, com o OTP confirmado no e-mail que a pessoa acabou de
+      // informar, é seguro promover pra ACTIVE e gravar esse contato — nunca antes disso.
+      const user =
+        existingUser && existingUser.status === 'PENDING_CLAIM'
+          ? await tx.user.update({
+              where: { id: existingUser.id },
+              data: { name: pending.name, phone: pending.phone, email: pending.email, status: 'ACTIVE' },
+            })
+          : await tx.user.upsert({
+              where: { cpfHash: pending.cpfHash },
+              create: {
+                cpfEncrypted: pending.cpfEncrypted,
+                cpfHash: pending.cpfHash,
+                name: pending.name,
+                phone: pending.phone,
+                email: pending.email,
+              },
+              update: {},
+            });
+
+      // Find-or-create: uma distribuição anterior pode já ter criado Membership+Wallet
+      // pra essa organização (é exatamente o caso PENDING_CLAIM); se veio de outra
+      // organização, ainda não existe e é criada aqui, como antes.
+      const membership = await tx.membership.upsert({
+        where: { userId_organizationId: { userId: user.id, organizationId: pending.organizationId } },
+        create: {
           userId: user.id,
           organizationId: pending.organizationId,
           type: pending.membershipType,
           externalRef: pending.externalRef,
         },
+        update: {},
       });
 
-      await tx.wallet.create({ data: { membershipId: membership.id } });
+      const existingWallet = await tx.wallet.findUnique({ where: { membershipId: membership.id } });
+      if (!existingWallet) {
+        await tx.wallet.create({ data: { membershipId: membership.id } });
+      }
+
       await tx.userSignupRequest.update({ where: { id: pending.id }, data: { consumedAt: new Date() } });
 
       return { userId: user.id };

@@ -9,6 +9,7 @@ export const postLedgerEntrySchema = z.object({
   referenceId: z.string().min(1),
   description: z.string().min(1),
   batchId: z.string().min(1).optional(),
+  distributionItemId: z.string().min(1).optional(),
   idempotencyKey: z.string().min(8),
 });
 

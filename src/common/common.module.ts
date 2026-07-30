@@ -8,6 +8,8 @@ import { LoginRateLimitGuard } from './guards/login-rate-limit.guard';
 import { SignupRateLimitGuard } from './guards/signup-rate-limit.guard';
 import { EMAIL_PORT } from './email/email.port';
 import { ConsoleEmailAdapter } from './email/console-email.adapter';
+import { NOTIFICATION_PORT } from './notifications/notification.port';
+import { ConsoleNotificationAdapter } from './notifications/console-notification.adapter';
 
 /** Guards reutilizáveis por qualquer módulo — @Global() pra não precisar reimportar. */
 @Global()
@@ -21,6 +23,7 @@ import { ConsoleEmailAdapter } from './email/console-email.adapter';
     LoginRateLimitGuard,
     SignupRateLimitGuard,
     { provide: EMAIL_PORT, useClass: ConsoleEmailAdapter },
+    { provide: NOTIFICATION_PORT, useClass: ConsoleNotificationAdapter },
   ],
   exports: [
     AdminJwtGuard,
@@ -31,6 +34,7 @@ import { ConsoleEmailAdapter } from './email/console-email.adapter';
     LoginRateLimitGuard,
     SignupRateLimitGuard,
     EMAIL_PORT,
+    NOTIFICATION_PORT,
   ],
 })
 export class CommonModule {}

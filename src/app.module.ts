@@ -20,6 +20,7 @@ import { WalletsModule } from './modules/wallets/wallets.module';
 import { BillingModule } from './modules/billing/billing.module';
 import { BatchesModule } from './modules/batches/batches.module';
 import { WebhooksModule } from './modules/webhooks/webhooks.module';
+import { DistributionsModule } from './modules/distributions/distributions.module';
 
 @Module({
   imports: [
@@ -57,6 +58,7 @@ import { WebhooksModule } from './modules/webhooks/webhooks.module';
     BillingModule,
     BatchesModule,
     WebhooksModule,
+    DistributionsModule,
   ],
   providers: [
     { provide: APP_FILTER, useClass: AllExceptionsFilter },

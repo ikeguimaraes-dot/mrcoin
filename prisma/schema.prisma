@@ -127,6 +127,14 @@ enum AuditActorType {
   SYSTEM
 }
 
+/// ACTIVE: já provou posse de um contato (fez signup por OTP). PENDING_CLAIM: conta
+/// pré-criada por uma distribuição, sem nenhum contato verificado — só vira ACTIVE
+/// quando a própria pessoa reivindicar via OTP (ver signup.service.ts).
+enum UserStatus {
+  ACTIVE
+  PENDING_CLAIM
+}
+
 // ─────────────────────────────────────────────────────────────────────────
 // Modelos
 // ─────────────────────────────────────────────────────────────────────────
@@ -182,14 +190,15 @@ model AdminUser {
 /// pertence diretamente a uma organização — o vínculo é via Membership,
 /// já que a mesma pessoa pode participar de várias empresas.
 model User {
-  id           String   @id @default(cuid())
+  id           String     @id @default(cuid())
   cpfEncrypted String
-  cpfHash      String   @unique
+  cpfHash      String     @unique
   name         String
   phone        String?
   email        String?
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  status       UserStatus @default(ACTIVE)
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
 
   memberships Membership[]
   devices     Device[]
@@ -275,27 +284,30 @@ model Wallet {
 /// correções são um novo entry do tipo REVERSAL. Cadeia de hash
 /// (`prevHash` → `hash`) garante integridade sequencial por carteira.
 model LedgerEntry {
-  id             String              @id @default(cuid())
-  walletId       String
-  wallet         Wallet              @relation(fields: [walletId], references: [id])
-  type           LedgerEntryType
-  amount         Int
-  balanceAfter   Int
-  idempotencyKey String              @unique
-  referenceType  LedgerReferenceType
-  referenceId    String
-  batchId        String?
-  batch          CoinBatch?          @relation(fields: [batchId], references: [id])
-  description    String
-  prevHash       String
-  hash           String
-  reversalOfId   String?
-  reversalOf     LedgerEntry?        @relation("LedgerEntryReversal", fields: [reversalOfId], references: [id])
-  reversals      LedgerEntry[]       @relation("LedgerEntryReversal")
-  createdAt      DateTime            @default(now())
+  id                 String              @id @default(cuid())
+  walletId           String
+  wallet             Wallet              @relation(fields: [walletId], references: [id])
+  type               LedgerEntryType
+  amount             Int
+  balanceAfter       Int
+  idempotencyKey     String              @unique
+  referenceType      LedgerReferenceType
+  referenceId        String
+  batchId            String?
+  batch              CoinBatch?          @relation(fields: [batchId], references: [id])
+  distributionItemId String?
+  distributionItem   DistributionItem?   @relation(fields: [distributionItemId], references: [id])
+  description        String
+  prevHash           String
+  hash               String
+  reversalOfId       String?
+  reversalOf         LedgerEntry?        @relation("LedgerEntryReversal", fields: [reversalOfId], references: [id])
+  reversals          LedgerEntry[]       @relation("LedgerEntryReversal")
+  createdAt          DateTime            @default(now())
 
   @@index([walletId, createdAt])
   @@index([batchId])
+  @@index([distributionItemId])
 }
 
 /// Lote de coins comprado por uma organização. Consumido em ordem FIFO
@@ -332,6 +344,7 @@ model Distribution {
   successItems   Int                @default(0)
   failedItems    Int                @default(0)
   status         DistributionStatus @default(PENDING)
+  idempotencyKey String?            @unique
   createdAt      DateTime           @default(now())
   updatedAt      DateTime           @updatedAt
 
@@ -351,8 +364,9 @@ model DistributionItem {
   amount         Int
   status         DistributionItemStatus @default(PENDING)
   errorReason    String?
-  ledgerEntryId  String?
   createdAt      DateTime               @default(now())
+
+  ledgerEntries LedgerEntry[]
 
   @@index([distributionId])
 }
