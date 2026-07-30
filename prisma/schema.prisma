@@ -122,6 +122,11 @@ enum JobRunStatus {
   FAILED
 }
 
+enum AuditActorType {
+  ADMIN
+  SYSTEM
+}
+
 // ─────────────────────────────────────────────────────────────────────────
 // Modelos
 // ─────────────────────────────────────────────────────────────────────────
@@ -129,13 +134,14 @@ enum JobRunStatus {
 /// Empresa cliente da plataforma. Compra lotes de coins e distribui para
 /// clientes ou funcionários. Fronteira do isolamento multi-tenant.
 model Organization {
-  id        String             @id @default(cuid())
-  name      String
-  cnpj      String             @unique
-  status    OrganizationStatus @default(ACTIVE)
-  plan      OrganizationPlan   @default(TRIAL)
-  createdAt DateTime           @default(now())
-  updatedAt DateTime           @updatedAt
+  id              String             @id @default(cuid())
+  name            String
+  cnpj            String             @unique
+  status          OrganizationStatus @default(ACTIVE)
+  plan            OrganizationPlan   @default(TRIAL)
+  asaasCustomerId String?            @unique
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
 
   adminUsers     AdminUser[]
   memberships    Membership[]
@@ -303,7 +309,8 @@ model CoinBatch {
   priceInCents   Int
   status         BatchStatus  @default(PENDING)
   expiresAt      DateTime
-  pspChargeId    String?
+  pspChargeId    String?      @unique
+  idempotencyKey String?      @unique
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
 
@@ -451,17 +458,20 @@ model Settlement {
   @@unique([partnerId, periodStart, periodEnd])
 }
 
-/// Registro de toda escrita feita por um AdminUser — actor, ação, payload e IP.
+/// Registro de toda escrita relevante de uma Organization — feita por um AdminUser
+/// (`actorType: ADMIN`, `actorAdminUserId` presente) ou por um processo automático
+/// (webhook do PSP, job agendado — `actorType: SYSTEM`, `actorAdminUserId` nulo).
 model AuditLog {
-  id               String       @id @default(cuid())
+  id               String         @id @default(cuid())
   organizationId   String
-  organization     Organization @relation(fields: [organizationId], references: [id])
-  actorAdminUserId String
-  actorAdminUser   AdminUser    @relation(fields: [actorAdminUserId], references: [id])
+  organization     Organization   @relation(fields: [organizationId], references: [id])
+  actorType        AuditActorType @default(ADMIN)
+  actorAdminUserId String?
+  actorAdminUser   AdminUser?     @relation(fields: [actorAdminUserId], references: [id])
   action           String
   payload          Json
   ip               String
-  createdAt        DateTime     @default(now())
+  createdAt        DateTime       @default(now())
 
   @@index([organizationId, createdAt])
 }

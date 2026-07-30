@@ -1,0 +1,2 @@
+export const BATCH_LIST_PAGE_SIZE = 20;
+export const DEFAULT_BATCH_VALIDITY_MONTHS = 12;

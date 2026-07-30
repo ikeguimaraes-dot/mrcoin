@@ -14,6 +14,10 @@ export const envSchema = z.object({
   JWT_ACCESS_SECRET: z.string().min(32),
   MFA_ENCRYPTION_KEY: z.string().regex(/^[0-9a-f]{64}$/i, 'deve ter 32 bytes em hex (64 caracteres)'),
   ADMIN_PANEL_URL: z.string().url().default('http://localhost:3001'),
+  ASAAS_ENV: z.enum(['sandbox', 'production']).default('sandbox'),
+  ASAAS_API_KEY: z.string().min(1),
+  ASAAS_BASE_URL: z.string().url().default('https://api-sandbox.asaas.com/v3'),
+  ASAAS_WEBHOOK_SECRET: z.string().min(16),
 });
 
 export type Env = z.infer<typeof envSchema>;

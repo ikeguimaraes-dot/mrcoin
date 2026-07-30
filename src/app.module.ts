@@ -17,6 +17,9 @@ import { AuthModule } from './modules/auth/auth.module';
 import { OrganizationsModule } from './modules/organizations/organizations.module';
 import { UsersModule } from './modules/users/users.module';
 import { WalletsModule } from './modules/wallets/wallets.module';
+import { BillingModule } from './modules/billing/billing.module';
+import { BatchesModule } from './modules/batches/batches.module';
+import { WebhooksModule } from './modules/webhooks/webhooks.module';
 
 @Module({
   imports: [
@@ -51,6 +54,9 @@ import { WalletsModule } from './modules/wallets/wallets.module';
     OrganizationsModule,
     UsersModule,
     WalletsModule,
+    BillingModule,
+    BatchesModule,
+    WebhooksModule,
   ],
   providers: [
     { provide: APP_FILTER, useClass: AllExceptionsFilter },
