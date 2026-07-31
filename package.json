@@ -4,6 +4,7 @@
   "private": true,
   "description": "Backend único da plataforma de loyalty coins",
   "license": "UNLICENSED",
+  "packageManager": "pnpm@11.5.2",
   "scripts": {
     "postinstall": "prisma generate",
     "build": "nest build",
