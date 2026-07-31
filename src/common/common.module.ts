@@ -10,6 +10,8 @@ import { EMAIL_PORT } from './email/email.port';
 import { ConsoleEmailAdapter } from './email/console-email.adapter';
 import { NOTIFICATION_PORT } from './notifications/notification.port';
 import { ConsoleNotificationAdapter } from './notifications/console-notification.adapter';
+import { STORAGE_PORT } from './storage/storage.port';
+import { LocalDiskStorageAdapter } from './storage/local-disk-storage.adapter';
 
 /** Guards reutilizáveis por qualquer módulo — @Global() pra não precisar reimportar. */
 @Global()
@@ -24,6 +26,7 @@ import { ConsoleNotificationAdapter } from './notifications/console-notification
     SignupRateLimitGuard,
     { provide: EMAIL_PORT, useClass: ConsoleEmailAdapter },
     { provide: NOTIFICATION_PORT, useClass: ConsoleNotificationAdapter },
+    { provide: STORAGE_PORT, useClass: LocalDiskStorageAdapter },
   ],
   exports: [
     AdminJwtGuard,
@@ -35,6 +38,7 @@ import { ConsoleNotificationAdapter } from './notifications/console-notification
     SignupRateLimitGuard,
     EMAIL_PORT,
     NOTIFICATION_PORT,
+    STORAGE_PORT,
   ],
 })
 export class CommonModule {}

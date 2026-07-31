@@ -28,3 +28,6 @@ coverage/
 
 # prisma
 prisma/*.db
+
+# storage local (stub de dev do StoragePort — pode conter CSVs com CPF)
+/uploads/

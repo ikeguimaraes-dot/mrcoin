@@ -354,7 +354,12 @@ model Distribution {
 }
 
 /// Uma linha de uma Distribution (um CPF + valor). `membershipId` só é
-/// preenchido quando o CPF é resolvido com sucesso.
+/// preenchido quando o CPF é resolvido com sucesso. Linhas de upload em massa (CSV)
+/// carregam o CPF em `cpfHash`/`cpfEncrypted` (nunca em claro, mesmo par de
+/// cpf-crypto.util.ts que User usa) enquanto aguardam o job processar — assim que a
+/// linha vira OK, os dois são zerados (minimização: User já é a fonte canônica a
+/// partir daí). Linha FAILED mantém o CPF: é o único registro de qual CPF era essa
+/// linha, necessário pro admin identificar o que corrigir.
 model DistributionItem {
   id             String                 @id @default(cuid())
   distributionId String
@@ -364,6 +369,11 @@ model DistributionItem {
   amount         Int
   status         DistributionItemStatus @default(PENDING)
   errorReason    String?
+  cpfHash        String?
+  cpfEncrypted   String?
+  name           String?
+  membershipType MembershipType?
+  externalRef    String?
   createdAt      DateTime               @default(now())
 
   ledgerEntries LedgerEntry[]

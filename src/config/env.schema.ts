@@ -18,6 +18,7 @@ export const envSchema = z.object({
   ASAAS_API_KEY: z.string().min(1),
   ASAAS_BASE_URL: z.string().url().default('https://api-sandbox.asaas.com/v3'),
   ASAAS_WEBHOOK_SECRET: z.string().min(16),
+  LOCAL_STORAGE_DIR: z.string().min(1).default('./uploads'),
 });
 
 export type Env = z.infer<typeof envSchema>;
