@@ -5,13 +5,12 @@ import { verifyPassword } from './password.util';
 import { RequestMeta, TokenPair, TokenService } from './token.service';
 import { MfaService } from './mfa.service';
 import { InvalidCredentialsException } from './exceptions/invalid-credentials.exception';
+import { MFA_MANDATORY_ROLES } from './auth.constants';
 
 export type LoginResult =
   | { status: 'MFA_REQUIRED'; mfaChallengeToken: string }
   | { status: 'MFA_SETUP_REQUIRED'; mfaChallengeToken: string }
   | ({ status: 'OK' } & TokenPair);
-
-const MFA_MANDATORY_ROLES = ['OWNER', 'MANAGER'];
 
 /** Orquestra login/refresh/logout — regra de negócio pura, delega tokens ao TokenService. */
 @Injectable()

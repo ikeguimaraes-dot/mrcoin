@@ -19,7 +19,9 @@ interface InviteResponseBody {
 }
 
 interface AcceptResponseBody {
-  accessToken: string;
+  status: 'OK' | 'MFA_SETUP_REQUIRED';
+  accessToken?: string;
+  mfaChallengeToken?: string;
 }
 
 interface ErrorResponseBody {
@@ -100,7 +102,7 @@ afterAll(async () => {
 });
 
 describe('Fluxo completo de convite', () => {
-  it('OWNER convida MANAGER, aceite cria o AdminUser e retorna sessão logada', async () => {
+  it('OWNER convida MANAGER, aceite cria o AdminUser mas exige MFA antes de qualquer sessão válida', async () => {
     const owner = await createAdmin('OWNER');
     const ownerToken = await tokenFor(owner);
     const inviteeEmail = `invitee-${randomUUID()}@test.coins-api.dev`;
@@ -120,13 +122,19 @@ describe('Fluxo completo de convite', () => {
       .send({ name: 'Novo Manager', password: NEW_ADMIN_PASSWORD })
       .expect(200);
 
+    // Achado da Sessão 11: antes desse fix, accept() devolvia accessToken direto pra
+    // qualquer role — MANAGER/OWNER furavam a obrigatoriedade de MFA do CLAUDE.md. Agora
+    // tem que vir MFA_SETUP_REQUIRED, igual AuthService.login() já faz.
     const acceptBody = acceptResponse.body as AcceptResponseBody;
-    expect(acceptBody.accessToken).toBeTruthy();
+    expect(acceptBody.status).toBe('MFA_SETUP_REQUIRED');
+    expect(acceptBody.mfaChallengeToken).toBeTruthy();
+    expect(acceptBody.accessToken).toBeUndefined();
 
     const created = await prisma.adminUser.findUniqueOrThrow({ where: { email: inviteeEmail } });
     createdAdminIds.push(created.id);
     expect(created.role).toBe('MANAGER');
     expect(created.organizationId).toBe(owner.organizationId);
+    expect(created.mfaEnabled).toBe(false);
 
     const invite = await prisma.adminInvite.findUniqueOrThrow({ where: { id: inviteBody.id } });
     expect(invite.acceptedAt).not.toBeNull();
@@ -142,9 +150,62 @@ describe('Fluxo completo de convite', () => {
     expect(acceptAuditLog).not.toBeNull();
     const acceptPayload = acceptAuditLog?.payload as AuditLogPayloadWithPassword;
     expect(acceptPayload.password).toBe('[REDACTED]');
+  });
 
-    // MFA_SETUP_REQUIRED pra role MANAGER sem MFA configurado já é coberto (sem HTTP, sem
-    // pressão no rate limiter de login) em auth.service.spec.ts — não repetimos aqui.
+  it('convite de OWNER também exige MFA_SETUP_REQUIRED no aceite, nunca sessão direta', async () => {
+    const owner = await createAdmin('OWNER');
+    const ownerToken = await tokenFor(owner);
+    const inviteeEmail = `owner-invitee-${randomUUID()}@test.coins-api.dev`;
+
+    const inviteResponse = await request(server)
+      .post('/organizations/admins/invites')
+      .set('Authorization', `Bearer ${ownerToken}`)
+      .send({ email: inviteeEmail, role: 'OWNER' })
+      .expect(201);
+
+    const rawToken = (inviteResponse.body as InviteResponseBody).inviteLink.split('/invites/')[1];
+
+    const acceptResponse = await request(server)
+      .post(`/organizations/admins/invites/${rawToken}/accept`)
+      .send({ name: 'Novo Owner', password: NEW_ADMIN_PASSWORD })
+      .expect(200);
+
+    const acceptBody = acceptResponse.body as AcceptResponseBody;
+    expect(acceptBody.status).toBe('MFA_SETUP_REQUIRED');
+    expect(acceptBody.mfaChallengeToken).toBeTruthy();
+    expect(acceptBody.accessToken).toBeUndefined();
+
+    const created = await prisma.adminUser.findUniqueOrThrow({ where: { email: inviteeEmail } });
+    createdAdminIds.push(created.id);
+    expect(created.role).toBe('OWNER');
+  });
+
+  it('convite de OPERATOR (fora da regra de MFA obrigatório) continua recebendo sessão direto no aceite', async () => {
+    const owner = await createAdmin('OWNER');
+    const ownerToken = await tokenFor(owner);
+    const inviteeEmail = `operator-invitee-${randomUUID()}@test.coins-api.dev`;
+
+    const inviteResponse = await request(server)
+      .post('/organizations/admins/invites')
+      .set('Authorization', `Bearer ${ownerToken}`)
+      .send({ email: inviteeEmail, role: 'OPERATOR' })
+      .expect(201);
+
+    const rawToken = (inviteResponse.body as InviteResponseBody).inviteLink.split('/invites/')[1];
+
+    const acceptResponse = await request(server)
+      .post(`/organizations/admins/invites/${rawToken}/accept`)
+      .send({ name: 'Novo Operator', password: NEW_ADMIN_PASSWORD })
+      .expect(200);
+
+    const acceptBody = acceptResponse.body as AcceptResponseBody;
+    expect(acceptBody.status).toBe('OK');
+    expect(acceptBody.accessToken).toBeTruthy();
+    expect(acceptBody.mfaChallengeToken).toBeUndefined();
+
+    const created = await prisma.adminUser.findUniqueOrThrow({ where: { email: inviteeEmail } });
+    createdAdminIds.push(created.id);
+    expect(created.role).toBe('OPERATOR');
   });
 });
 

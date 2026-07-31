@@ -502,6 +502,10 @@ model AuditLog {
 
 /// Convite pendente de um AdminUser. Só vira AdminUser de fato no aceite (define senha) —
 /// evita ter que tornar passwordHash nullable pra representar o estado "convidado".
+/// invitedByAdminUserId nulo = convite "de sistema", criado fora do HTTP (script de
+/// bootstrap do primeiro OWNER de uma organização nova — não existe admin nenhum ainda
+/// pra convidar). O endpoint POST /organizations/admins/invites sempre preenche esse
+/// campo; só o script de bootstrap cria um convite com ele nulo.
 model AdminInvite {
   id                   String       @id @default(cuid())
   organizationId       String
@@ -509,8 +513,8 @@ model AdminInvite {
   email                String
   role                 AdminRole
   tokenHash            String       @unique
-  invitedByAdminUserId String
-  invitedByAdminUser   AdminUser    @relation(fields: [invitedByAdminUserId], references: [id])
+  invitedByAdminUserId String?
+  invitedByAdminUser   AdminUser?   @relation(fields: [invitedByAdminUserId], references: [id])
   expiresAt            DateTime
   acceptedAt           DateTime?
   revokedAt            DateTime?

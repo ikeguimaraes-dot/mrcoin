@@ -9,6 +9,7 @@ import { redactSensitiveFields } from '../../common/audit/redact.util';
 import { EMAIL_PORT, EmailPort } from '../../common/email/email.port';
 import { hashPassword } from '../auth/password.util';
 import { RequestMeta, TokenPair, TokenService } from '../auth/token.service';
+import { MFA_MANDATORY_ROLES } from '../auth/auth.constants';
 import { ADMIN_INVITE_TTL_DAYS } from './organizations.constants';
 import { InviteAdminInput } from './dto/invite-admin.schema';
 import { AcceptInviteInput } from './dto/accept-invite.schema';
@@ -34,6 +35,10 @@ export interface InviteResult {
   expiresAt: Date;
   inviteLink: string;
 }
+
+export type AcceptInviteResult =
+  | { status: 'MFA_SETUP_REQUIRED'; mfaChallengeToken: string }
+  | ({ status: 'OK' } & TokenPair);
 
 /** Convite, aceite, troca de papel e desativação de AdminUser — sempre escopados pela
  * organização do chamador (nunca aceita organizationId vindo do cliente). */
@@ -84,7 +89,7 @@ export class AdminInvitesService {
     return { id: invite.id, email: invite.email, role: invite.role, expiresAt: invite.expiresAt, inviteLink };
   }
 
-  async accept(rawToken: string, input: AcceptInviteInput, meta: RequestMeta = {}): Promise<TokenPair> {
+  async accept(rawToken: string, input: AcceptInviteInput, meta: RequestMeta = {}): Promise<AcceptInviteResult> {
     const tokenHash = this.hashToken(rawToken);
     const invite = await this.prisma.adminInvite.findUnique({ where: { tokenHash } });
 
@@ -128,7 +133,18 @@ export class AdminInvitesService {
       return created;
     });
 
-    return this.tokenService.issueTokenPair(admin, meta);
+    // OWNER/MANAGER nunca saem daqui com uma sessão válida sem MFA configurado — mesma
+    // regra que AuthService.login() já aplica pra quem já tem conta. Sem isso, aceitar um
+    // convite desses papéis furava a obrigatoriedade de MFA do CLAUDE.md.
+    if (MFA_MANDATORY_ROLES.includes(admin.role)) {
+      return {
+        status: 'MFA_SETUP_REQUIRED',
+        mfaChallengeToken: await this.tokenService.issueMfaChallengeToken(admin.id),
+      };
+    }
+
+    const tokens = await this.tokenService.issueTokenPair(admin, meta);
+    return { status: 'OK', ...tokens };
   }
 
   async changeRole(caller: CallerIdentity, targetAdminId: string, input: ChangeRoleInput): Promise<AdminUser> {

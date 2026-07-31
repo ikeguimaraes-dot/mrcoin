@@ -5,11 +5,12 @@
   "description": "Backend único da plataforma de loyalty coins",
   "license": "UNLICENSED",
   "scripts": {
+    "postinstall": "prisma generate",
     "build": "nest build",
     "start": "nest start",
     "start:dev": "nest start --watch",
     "start:debug": "nest start --debug --watch",
-    "start:prod": "node dist/main",
+    "start:prod": "node dist/src/main.js",
     "lint": "eslint \"{src,apps,libs,test,prisma}/**/*.ts\" \"*.ts\"",
     "lint:fix": "eslint \"{src,apps,libs,test,prisma}/**/*.ts\" \"*.ts\" --fix",
     "format": "prettier --write \"src/**/*.ts\"",

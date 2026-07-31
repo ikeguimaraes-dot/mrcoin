@@ -39,7 +39,11 @@ export class AdminInvitesController {
 
   @Post('invites/:token/accept')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Aceita um convite e define a senha — cria o AdminUser e já retorna sessão' })
+  @ApiOperation({
+    summary:
+      'Aceita um convite e define a senha — cria o AdminUser. Pra OWNER/MANAGER devolve ' +
+      'MFA_SETUP_REQUIRED em vez de sessão (MFA é obrigatório antes de qualquer token válido).',
+  })
   accept(
     @Param('token') token: string,
     @Body(new ZodValidationPipe(acceptInviteSchema)) body: AcceptInviteInput,
