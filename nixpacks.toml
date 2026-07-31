@@ -1,0 +1,14 @@
+# O Nixpacks, ao detectar "packageManager" no package.json, força
+# `npm install -g corepack@0.24.1 && corepack enable` na fase de install —
+# essa versão do corepack não consegue carregar o pnpm 11.5.2 (erro
+# ERR_VM_DYNAMIC_IMPORT_CALLBACK_MISSING, reproduzido localmente). Além
+# disso o Nixpacks não tem pacote Nix pra pnpm major 11 (só até 10).
+#
+# Por isso instalamos o pnpm direto via npm, sem depender do corepack —
+# a mesma versão pinada em package.json#packageManager. Se atualizar uma,
+# atualize a outra.
+[phases.install]
+cmds = [
+  "npm install -g pnpm@11.5.2",
+  "pnpm i --frozen-lockfile"
+]
