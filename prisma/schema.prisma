@@ -283,6 +283,9 @@ model Wallet {
 /// Movimentação imutável de coins. Nunca é atualizada nem apagada —
 /// correções são um novo entry do tipo REVERSAL. Cadeia de hash
 /// (`prevHash` → `hash`) garante integridade sequencial por carteira.
+/// `batch`/`distributionItem` são onDelete: Restrict de propósito — `batchId`
+/// entra no payload do hash; um SET NULL em cascata mudaria esse campo por
+/// baixo do código e quebraria o hash sem nenhum UPDATE explícito.
 model LedgerEntry {
   id                 String              @id @default(cuid())
   walletId           String
@@ -294,9 +297,9 @@ model LedgerEntry {
   referenceType      LedgerReferenceType
   referenceId        String
   batchId            String?
-  batch              CoinBatch?          @relation(fields: [batchId], references: [id])
+  batch              CoinBatch?          @relation(fields: [batchId], references: [id], onDelete: Restrict)
   distributionItemId String?
-  distributionItem   DistributionItem?   @relation(fields: [distributionItemId], references: [id])
+  distributionItem   DistributionItem?   @relation(fields: [distributionItemId], references: [id], onDelete: Restrict)
   description        String
   prevHash           String
   hash               String
