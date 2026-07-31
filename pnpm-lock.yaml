@@ -50,6 +50,9 @@ importers:
       otplib:
         specifier: ^13.4.1
         version: 13.4.1
+      prisma:
+        specifier: ^6.0.0
+        version: 6.19.3(typescript@5.9.3)
       qrcode:
         specifier: ^1.5.4
         version: 1.5.4
@@ -114,9 +117,6 @@ importers:
       prettier:
         specifier: ^3.3.0
         version: 3.9.6
-      prisma:
-        specifier: ^6.0.0
-        version: 6.19.3(typescript@5.9.3)
       source-map-support:
         specifier: ^0.5.21
         version: 0.5.21
