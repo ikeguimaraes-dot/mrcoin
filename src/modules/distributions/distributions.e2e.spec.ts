@@ -420,7 +420,9 @@ describe('POST /admin/distributions', () => {
       .set('Idempotency-Key', `test-${randomUUID()}`)
       .send({ cpf: cpfWithReason, name: 'Com motivo', amount: 10, membershipType: 'CUSTOMER', reason: 'Bônus aniversário' })
       .expect(201);
-    expect((withReason.body as CreateDistributionResponseBody).distribution.reason).toBe('Bônus aniversário');
+    const withReasonBody = withReason.body as CreateDistributionResponseBody;
+    expect(withReasonBody.distribution.reason).toBe('Bônus aniversário');
+    expect(withReasonBody.item.ledgerEntries[0]?.description).toBe('Distribuição de coins — Bônus aniversário');
     const userWithReason = await prisma.user.findUniqueOrThrow({ where: { cpfHash: hashCpf(cpfWithReason) } });
     createdUserIds.push(userWithReason.id);
 
@@ -431,7 +433,9 @@ describe('POST /admin/distributions', () => {
       .set('Idempotency-Key', `test-${randomUUID()}`)
       .send({ cpf: cpfWithoutReason, name: 'Sem motivo', amount: 10, membershipType: 'CUSTOMER' })
       .expect(201);
-    expect((withoutReason.body as CreateDistributionResponseBody).distribution.reason).toBeNull();
+    const withoutReasonBody = withoutReason.body as CreateDistributionResponseBody;
+    expect(withoutReasonBody.distribution.reason).toBeNull();
+    expect(withoutReasonBody.item.ledgerEntries[0]?.description).toBe('Distribuição de coins');
     const userWithoutReason = await prisma.user.findUniqueOrThrow({ where: { cpfHash: hashCpf(cpfWithoutReason) } });
     createdUserIds.push(userWithoutReason.id);
 

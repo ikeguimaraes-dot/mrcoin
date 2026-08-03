@@ -141,6 +141,7 @@ export class DistributionsService {
         wallet.id,
         createdItem.id,
         `distribution:${idempotencyKey}`,
+        input.reason,
       );
 
       return { distribution: createdDistribution, item: { ...createdItem, ledgerEntries }, userId: user.id };
@@ -179,7 +180,8 @@ export class DistributionsService {
   }
 
   /** Executa um plano já montado: decrementa cada lote com guarda otimista e posta um
-   * LedgerEntry por lote via LedgerService.post() (regra 1 do CLAUDE.md). */
+   * LedgerEntry por lote via LedgerService.post() (regra 1 do CLAUDE.md). Com `reason`,
+   * a description do entry carrega o motivo — senão fica só o texto padrão. */
   private async executeFifoPlan(
     tx: TransactionClient,
     plan: BatchConsumptionStep[],
@@ -187,8 +189,10 @@ export class DistributionsService {
     walletId: string,
     distributionItemId: string,
     idempotencyKeyPrefix: string,
+    reason?: string | null,
   ): Promise<LedgerEntry[]> {
     const ledgerEntries: LedgerEntry[] = [];
+    const description = reason ? `${DISTRIBUTION_DESCRIPTION} — ${reason}` : DISTRIBUTION_DESCRIPTION;
 
     for (const step of plan) {
       const decremented = await tx.coinBatch.updateMany({
@@ -208,7 +212,7 @@ export class DistributionsService {
           amount: step.amount,
           referenceType: 'DISTRIBUTION',
           referenceId: distributionItemId,
-          description: DISTRIBUTION_DESCRIPTION,
+          description,
           batchId: step.batch.id,
           distributionItemId,
           idempotencyKey: `${idempotencyKeyPrefix}:${step.batch.id}`,
