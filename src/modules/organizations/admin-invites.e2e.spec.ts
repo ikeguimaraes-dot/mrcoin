@@ -339,11 +339,14 @@ describe('Troca de papel e desativação', () => {
     const target = await createAdmin('VIEWER', owner.organizationId);
     const ownerToken = await tokenFor(owner);
 
-    await request(server)
+    const response = await request(server)
       .patch(`/organizations/admins/${target.adminId}/role`)
       .set('Authorization', `Bearer ${ownerToken}`)
       .send({ role: 'OPERATOR' })
       .expect(200);
+
+    expect(response.body).not.toHaveProperty('passwordHash');
+    expect(response.body).not.toHaveProperty('mfaSecret');
 
     const updated = await prisma.adminUser.findUniqueOrThrow({ where: { id: target.adminId } });
     expect(updated.role).toBe('OPERATOR');
@@ -379,13 +382,54 @@ describe('Troca de papel e desativação', () => {
     const target = await createAdmin('OPERATOR', manager.organizationId);
     const managerToken = await tokenFor(manager);
 
-    await request(server)
+    const response = await request(server)
       .patch(`/organizations/admins/${target.adminId}/deactivate`)
       .set('Authorization', `Bearer ${managerToken}`)
       .expect(200);
 
+    expect(response.body).not.toHaveProperty('passwordHash');
+    expect(response.body).not.toHaveProperty('mfaSecret');
+
     const updated = await prisma.adminUser.findUniqueOrThrow({ where: { id: target.adminId } });
     expect(updated.status).toBe('INACTIVE');
+  });
+
+  // Regressão de segurança: changeRole/deactivate devolviam o AdminUser inteiro (sem select),
+  // vazando passwordHash e mfaSecret pra qualquer OWNER/MANAGER que trocasse o papel ou
+  // desativasse um colega — mfaSecret em mãos de terceiro permite gerar código TOTP válido
+  // pra conta alheia, furando por completo a exigência de MFA (regra do CLAUDE.md). Correção:
+  // select explícito (SAFE_ADMIN_SELECT em admin-invites.service.ts), mesmo shape já usado
+  // por AdminDirectoryService. Este teste fixa exatamente o shape esperado, não só a ausência
+  // dos dois campos, pra pegar qualquer regressão futura que reintroduza um select amplo.
+  it('SEGURANÇA: response de role/deactivate nunca inclui passwordHash nem mfaSecret, e tem exatamente os campos esperados', async () => {
+    const owner = await createAdmin('OWNER');
+    const targetForRole = await createAdmin('VIEWER', owner.organizationId);
+    const targetForDeactivate = await createAdmin('OPERATOR', owner.organizationId);
+    const ownerToken = await tokenFor(owner);
+
+    const expectedKeys = [
+      'id',
+      'name',
+      'email',
+      'role',
+      'status',
+      'mfaEnabled',
+      'organizationId',
+      'lastLoginAt',
+    ].sort();
+
+    const roleResponse = await request(server)
+      .patch(`/organizations/admins/${targetForRole.adminId}/role`)
+      .set('Authorization', `Bearer ${ownerToken}`)
+      .send({ role: 'OPERATOR' })
+      .expect(200);
+    expect(Object.keys(roleResponse.body as object).sort()).toEqual(expectedKeys);
+
+    const deactivateResponse = await request(server)
+      .patch(`/organizations/admins/${targetForDeactivate.adminId}/deactivate`)
+      .set('Authorization', `Bearer ${ownerToken}`)
+      .expect(200);
+    expect(Object.keys(deactivateResponse.body as object).sort()).toEqual(expectedKeys);
   });
 
   it('OPERATOR não pode desativar ninguém (rota exige MANAGER+)', async () => {

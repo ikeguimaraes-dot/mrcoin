@@ -10,6 +10,7 @@ import { EMAIL_PORT, EmailPort } from '../../common/email/email.port';
 import { hashPassword } from '../auth/password.util';
 import { RequestMeta, TokenPair, TokenService } from '../auth/token.service';
 import { MFA_MANDATORY_ROLES } from '../auth/auth.constants';
+import { AdminProfile } from '../auth/admin-directory.service';
 import { ADMIN_INVITE_TTL_DAYS } from './organizations.constants';
 import { InviteAdminInput } from './dto/invite-admin.schema';
 import { AcceptInviteInput } from './dto/accept-invite.schema';
@@ -27,6 +28,18 @@ export interface CallerIdentity {
   organizationId: string;
   role: AdminRole;
 }
+
+/** Mesmo shape seguro de AdminDirectoryService — nunca passwordHash/mfaSecret pra fora. */
+const SAFE_ADMIN_SELECT = {
+  id: true,
+  name: true,
+  email: true,
+  role: true,
+  status: true,
+  mfaEnabled: true,
+  organizationId: true,
+  lastLoginAt: true,
+} as const;
 
 export interface InviteResult {
   id: string;
@@ -147,7 +160,7 @@ export class AdminInvitesService {
     return { status: 'OK', ...tokens };
   }
 
-  async changeRole(caller: CallerIdentity, targetAdminId: string, input: ChangeRoleInput): Promise<AdminUser> {
+  async changeRole(caller: CallerIdentity, targetAdminId: string, input: ChangeRoleInput): Promise<AdminProfile> {
     if (targetAdminId === caller.id) {
       throw new CannotModifySelfException();
     }
@@ -157,10 +170,11 @@ export class AdminInvitesService {
     return this.prisma.adminUser.update({
       where: { id: targetAdminId },
       data: { role: input.role },
+      select: SAFE_ADMIN_SELECT,
     });
   }
 
-  async deactivate(caller: CallerIdentity, targetAdminId: string): Promise<AdminUser> {
+  async deactivate(caller: CallerIdentity, targetAdminId: string): Promise<AdminProfile> {
     if (targetAdminId === caller.id) {
       throw new CannotModifySelfException();
     }
@@ -174,6 +188,7 @@ export class AdminInvitesService {
     return this.prisma.adminUser.update({
       where: { id: targetAdminId },
       data: { status: 'INACTIVE' },
+      select: SAFE_ADMIN_SELECT,
     });
   }
 
