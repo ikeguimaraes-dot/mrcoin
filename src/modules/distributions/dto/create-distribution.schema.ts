@@ -1,4 +1,5 @@
 import { MembershipType } from '@prisma/client';
+import { createZodDto } from 'nestjs-zod';
 import { z } from 'zod';
 
 export const createDistributionSchema = z.object({
@@ -11,3 +12,4 @@ export const createDistributionSchema = z.object({
 });
 
 export type CreateDistributionInput = z.infer<typeof createDistributionSchema>;
+export class CreateDistributionDto extends createZodDto(createDistributionSchema) {}

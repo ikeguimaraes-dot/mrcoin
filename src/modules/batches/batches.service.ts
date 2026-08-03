@@ -6,9 +6,10 @@ import { BATCH_LIST_PAGE_SIZE } from './batches.constants';
 import { CreateBatchInput } from './dto/create-batch.schema';
 import { ListBatchesQuery } from './dto/list-batches.schema';
 import { IdempotencyConflictException } from './exceptions/idempotency-conflict.exception';
+import { SAFE_COIN_BATCH_SELECT, SafeCoinBatch, toSafeCoinBatch } from './safe-coin-batch.util';
 
 export interface CreateBatchResult {
-  batch: CoinBatch;
+  batch: SafeCoinBatch;
   pix: Pick<PixChargeResult, 'qrCodeImage' | 'copyPasteCode' | 'expirationDate'> | null;
 }
 
@@ -53,6 +54,7 @@ export class BatchesService {
         pspChargeId: charge.pspChargeId,
         idempotencyKey,
       },
+      select: SAFE_COIN_BATCH_SELECT,
     });
 
     return {
@@ -68,13 +70,14 @@ export class BatchesService {
   async listBatches(
     organizationId: string,
     query: ListBatchesQuery,
-  ): Promise<{ items: CoinBatch[]; nextCursor: string | null }> {
+  ): Promise<{ items: SafeCoinBatch[]; nextCursor: string | null }> {
     const limit = query.limit ?? BATCH_LIST_PAGE_SIZE;
 
     const batches = await this.prisma.coinBatch.findMany({
       where: { organizationId },
       orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
       take: limit + 1,
+      select: SAFE_COIN_BATCH_SELECT,
       ...(query.cursor ? { cursor: { id: query.cursor }, skip: 1 } : {}),
     });
 
@@ -102,7 +105,7 @@ export class BatchesService {
 
     const pix = existing.pspChargeId ? await this.billingService.refetchQrCode(existing.pspChargeId) : null;
 
-    return { batch: existing, pix };
+    return { batch: toSafeCoinBatch(existing), pix };
   }
 }
 

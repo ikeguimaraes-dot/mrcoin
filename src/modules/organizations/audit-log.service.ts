@@ -1,8 +1,9 @@
 import { Injectable } from '@nestjs/common';
-import { AuditLog, Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AUDIT_LOG_PAGE_SIZE } from './organizations.constants';
 import { AuditLogQuery } from './dto/audit-log-query.schema';
+import { SAFE_AUDIT_LOG_SELECT, SafeAuditLog } from './safe-audit-log.util';
 
 /** Leitura de AuditLog sempre escopada por organizationId recebido explicitamente (o
  * controller garante que vem do JWT via TenantGuard, nunca de query livre). */
@@ -13,7 +14,7 @@ export class AuditLogService {
   async list(
     organizationId: string,
     query: AuditLogQuery,
-  ): Promise<{ items: AuditLog[]; nextCursor: string | null }> {
+  ): Promise<{ items: SafeAuditLog[]; nextCursor: string | null }> {
     const limit = query.limit ?? AUDIT_LOG_PAGE_SIZE;
     const where: Prisma.AuditLogWhereInput = {
       organizationId,
@@ -28,6 +29,7 @@ export class AuditLogService {
       where,
       orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
       take: limit + 1,
+      select: SAFE_AUDIT_LOG_SELECT,
       ...(query.cursor ? { cursor: { id: query.cursor }, skip: 1 } : {}),
     });
 

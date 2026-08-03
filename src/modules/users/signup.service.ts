@@ -1,4 +1,3 @@
-import { createHash, randomInt } from 'node:crypto';
 import { Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -6,11 +5,11 @@ import { encryptCpf, hashCpf } from '../../common/crypto/cpf-crypto.util';
 import { EMAIL_PORT, EmailPort } from '../../common/email/email.port';
 import {
   NON_EXISTENT_USER_ID_PLACEHOLDER,
-  OTP_CODE_LENGTH,
   OTP_MAX_ATTEMPTS,
   OTP_TTL_MINUTES,
   USER_ACCESS_TOKEN_TTL_DAYS,
 } from './users.constants';
+import { generateOtpCode, hashOtpCode } from './otp.util';
 import { RequestSignupInput } from './dto/request-signup.schema';
 import { VerifySignupInput } from './dto/verify-signup.schema';
 import { MembershipAlreadyExistsException } from './exceptions/membership-already-exists.exception';
@@ -71,8 +70,8 @@ export class SignupService {
       throw new Error('Usuário existente sem e-mail cadastrado — estado inconsistente.');
     }
 
-    const rawCode = randomInt(0, 10 ** OTP_CODE_LENGTH).toString().padStart(OTP_CODE_LENGTH, '0');
-    const codeHash = this.hashCode(rawCode);
+    const rawCode = generateOtpCode();
+    const codeHash = hashOtpCode(rawCode);
     const expiresAt = new Date(Date.now() + OTP_TTL_MINUTES * 60 * 1000);
 
     await this.prisma.userSignupRequest.deleteMany({
@@ -122,7 +121,7 @@ export class SignupService {
       throw new OtpTooManyAttemptsException();
     }
 
-    const codeHash = this.hashCode(input.code);
+    const codeHash = hashOtpCode(input.code);
 
     if (codeHash !== pending.codeHash) {
       const updated = await this.prisma.userSignupRequest.update({
@@ -191,9 +190,5 @@ export class SignupService {
     );
 
     return { accessToken, expiresIn };
-  }
-
-  private hashCode(rawCode: string): string {
-    return createHash('sha256').update(rawCode).digest('hex');
   }
 }

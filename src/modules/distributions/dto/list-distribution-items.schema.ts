@@ -1,3 +1,4 @@
+import { createZodDto } from 'nestjs-zod';
 import { z } from 'zod';
 
 export const listDistributionItemsQuerySchema = z.object({
@@ -6,3 +7,4 @@ export const listDistributionItemsQuerySchema = z.object({
 });
 
 export type ListDistributionItemsQuery = z.infer<typeof listDistributionItemsQuerySchema>;
+export class ListDistributionItemsQueryDto extends createZodDto(listDistributionItemsQuerySchema) {}

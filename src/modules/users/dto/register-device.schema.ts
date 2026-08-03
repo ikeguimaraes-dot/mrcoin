@@ -1,3 +1,4 @@
+import { createZodDto } from 'nestjs-zod';
 import { z } from 'zod';
 
 export const registerDeviceSchema = z.object({
@@ -6,3 +7,4 @@ export const registerDeviceSchema = z.object({
 });
 
 export type RegisterDeviceInput = z.infer<typeof registerDeviceSchema>;
+export class RegisterDeviceDto extends createZodDto(registerDeviceSchema) {}

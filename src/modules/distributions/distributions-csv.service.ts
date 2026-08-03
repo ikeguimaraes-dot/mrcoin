@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { BadRequestException, Inject, Injectable } from '@nestjs/common';
-import { Distribution, DistributionItem, DistributionItemStatus } from '@prisma/client';
+import { DistributionItemStatus } from '@prisma/client';
 import { parse } from 'csv-parse/sync';
 import { PrismaService } from '../../prisma/prisma.service';
 import { encryptCpf, hashCpf } from '../../common/crypto/cpf-crypto.util';
@@ -9,6 +9,8 @@ import { CSV_MAX_FILE_SIZE_BYTES, CSV_MAX_ROWS } from './distributions.constants
 import { UploadDistributionCsvInput } from './dto/upload-distribution-csv.schema';
 import { IdempotencyConflictException } from './exceptions/idempotency-conflict.exception';
 import { listDistributionItems } from './list-distribution-items.util';
+import { SafeDistributionItem } from './safe-distribution-item.util';
+import { SAFE_DISTRIBUTION_SELECT, SafeDistribution } from './safe-distribution.util';
 
 const CPF_REGEX = /^\d{11}$/;
 
@@ -30,8 +32,8 @@ interface ValidatedRow {
 }
 
 export interface UploadCsvResult {
-  distribution: Distribution;
-  items: { items: DistributionItem[]; nextCursor: string | null };
+  distribution: SafeDistribution;
+  items: { items: SafeDistributionItem[]; nextCursor: string | null };
 }
 
 /** Upload + validação prévia do CSV de distribuição em massa — nada é creditado aqui,
@@ -74,7 +76,10 @@ export class DistributionsCsvService {
       });
     }
 
-    const existing = await this.prisma.distribution.findUnique({ where: { idempotencyKey } });
+    const existing = await this.prisma.distribution.findUnique({
+      where: { idempotencyKey },
+      select: SAFE_DISTRIBUTION_SELECT,
+    });
     if (existing) {
       if (existing.organizationId !== organizationId || existing.totalItems !== rows.length) {
         throw new IdempotencyConflictException(idempotencyKey, { distributionId: existing.id });
@@ -104,6 +109,7 @@ export class DistributionsCsvService {
           status: 'PENDING',
           idempotencyKey,
         },
+        select: SAFE_DISTRIBUTION_SELECT,
       });
 
       await tx.distributionItem.createMany({

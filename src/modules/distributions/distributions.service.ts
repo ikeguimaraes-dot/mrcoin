@@ -1,11 +1,12 @@
 import { HttpException, Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
-import { CoinBatch, Distribution, DistributionItem, LedgerEntry, Membership, Prisma, User } from '@prisma/client';
+import { CoinBatch, DistributionItem, LedgerEntry, Membership, Prisma, User } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { encryptCpf, hashCpf } from '../../common/crypto/cpf-crypto.util';
 import { NOTIFICATION_PORT, NotificationPort } from '../../common/notifications/notification.port';
 import { LedgerService } from '../ledger/ledger.service';
+import { SAFE_LEDGER_ENTRY_SELECT, SafeLedgerEntry, toSafeLedgerEntry } from '../ledger/safe-ledger-entry.util';
 import { CreateDistributionInput } from './dto/create-distribution.schema';
 import { ListDistributionsQuery } from './dto/list-distributions.schema';
 import { InsufficientCoinStockException } from './exceptions/insufficient-coin-stock.exception';
@@ -18,6 +19,8 @@ import {
   QUEUE_PROCESS_DISTRIBUTION,
 } from './distributions.constants';
 import { listDistributionItems } from './list-distribution-items.util';
+import { SAFE_DISTRIBUTION_ITEM_SELECT, SafeDistributionItem } from './safe-distribution-item.util';
+import { SAFE_DISTRIBUTION_SELECT, SafeDistribution } from './safe-distribution.util';
 
 type TransactionClient = Prisma.TransactionClient;
 
@@ -27,16 +30,16 @@ interface ProcessDistributionJobData {
 
 const DISTRIBUTION_DESCRIPTION = 'Distribuição de coins';
 
-type ExistingDistribution = Distribution & {
-  items: (DistributionItem & {
+type ExistingDistribution = SafeDistribution & {
+  items: (SafeDistributionItem & {
     membership: (Membership & { user: User }) | null;
-    ledgerEntries: LedgerEntry[];
+    ledgerEntries: SafeLedgerEntry[];
   })[];
 };
 
 export interface DistributeIndividualResult {
-  distribution: Distribution;
-  item: DistributionItem & { ledgerEntries: LedgerEntry[] };
+  distribution: SafeDistribution;
+  item: SafeDistributionItem & { ledgerEntries: SafeLedgerEntry[] };
 }
 
 interface BatchConsumptionStep {
@@ -75,7 +78,16 @@ export class DistributionsService {
   ): Promise<DistributeIndividualResult> {
     const existing = await this.prisma.distribution.findUnique({
       where: { idempotencyKey },
-      include: { items: { include: { membership: { include: { user: true } }, ledgerEntries: true } } },
+      select: {
+        ...SAFE_DISTRIBUTION_SELECT,
+        items: {
+          select: {
+            ...SAFE_DISTRIBUTION_ITEM_SELECT,
+            membership: { include: { user: true } },
+            ledgerEntries: { select: SAFE_LEDGER_ENTRY_SELECT },
+          },
+        },
+      },
     });
 
     if (existing) {
@@ -123,6 +135,7 @@ export class DistributionsService {
           status: 'COMPLETED',
           idempotencyKey,
         },
+        select: SAFE_DISTRIBUTION_SELECT,
       });
 
       const createdItem = await tx.distributionItem.create({
@@ -132,6 +145,7 @@ export class DistributionsService {
           amount: input.amount,
           status: 'OK',
         },
+        select: SAFE_DISTRIBUTION_ITEM_SELECT,
       });
 
       const ledgerEntries = await this.executeFifoPlan(
@@ -144,7 +158,11 @@ export class DistributionsService {
         input.reason,
       );
 
-      return { distribution: createdDistribution, item: { ...createdItem, ledgerEntries }, userId: user.id };
+      return {
+        distribution: createdDistribution,
+        item: { ...createdItem, ledgerEntries: ledgerEntries.map(toSafeLedgerEntry) },
+        userId: user.id,
+      };
     });
 
     await this.notifyBestEffort(userId, input.amount);
@@ -262,7 +280,7 @@ export class DistributionsService {
   /** Transição atômica PENDING → PROCESSING — `count === 0` cobre tanto "já confirmada"
    * quanto "não existe nessa org", então só depois disso vale a pena buscar qual dos dois
    * casos é, pra devolver o erro certo. Só enfileira o job depois da transição confirmada. */
-  async confirmBulkDistribution(organizationId: string, distributionId: string): Promise<Distribution> {
+  async confirmBulkDistribution(organizationId: string, distributionId: string): Promise<SafeDistribution> {
     const transitioned = await this.prisma.distribution.updateMany({
       where: { id: distributionId, organizationId, status: 'PENDING' },
       data: { status: 'PROCESSING' },
@@ -278,11 +296,17 @@ export class DistributionsService {
 
     await this.processDistributionQueue.add(JOB_PROCESS_DISTRIBUTION, { distributionId });
 
-    return this.prisma.distribution.findUniqueOrThrow({ where: { id: distributionId } });
+    return this.prisma.distribution.findUniqueOrThrow({
+      where: { id: distributionId },
+      select: SAFE_DISTRIBUTION_SELECT,
+    });
   }
 
-  async getDistribution(organizationId: string, distributionId: string): Promise<Distribution> {
-    const distribution = await this.prisma.distribution.findFirst({ where: { id: distributionId, organizationId } });
+  async getDistribution(organizationId: string, distributionId: string): Promise<SafeDistribution> {
+    const distribution = await this.prisma.distribution.findFirst({
+      where: { id: distributionId, organizationId },
+      select: SAFE_DISTRIBUTION_SELECT,
+    });
 
     if (!distribution) {
       throw new NotFoundException({ code: 'NOT_FOUND', message: 'Distribuição não encontrada.' });
@@ -298,13 +322,14 @@ export class DistributionsService {
   async listDistributions(
     organizationId: string,
     query: ListDistributionsQuery,
-  ): Promise<{ items: Distribution[]; nextCursor: string | null }> {
+  ): Promise<{ items: SafeDistribution[]; nextCursor: string | null }> {
     const limit = query.limit ?? DISTRIBUTION_LIST_PAGE_SIZE;
 
     const items = await this.prisma.distribution.findMany({
       where: { organizationId },
       orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
       take: limit + 1,
+      select: SAFE_DISTRIBUTION_SELECT,
       ...(query.cursor ? { cursor: { id: query.cursor }, skip: 1 } : {}),
     });
 

@@ -11,6 +11,7 @@ import { InsufficientBalanceException } from './exceptions/insufficient-balance.
 import { InvalidReversalException } from './exceptions/invalid-reversal.exception';
 import { LedgerConcurrencyException } from './exceptions/ledger-concurrency.exception';
 import { computeEntryHash, GENESIS_HASH } from './hash.util';
+import { SAFE_LEDGER_ENTRY_SELECT, SafeLedgerEntry } from './safe-ledger-entry.util';
 
 type TransactionClient = Prisma.TransactionClient;
 
@@ -111,12 +112,13 @@ export class LedgerService {
   async getEntries(
     walletId: string,
     options?: { cursor?: string; limit?: number },
-  ): Promise<{ items: LedgerEntry[]; nextCursor: string | null }> {
+  ): Promise<{ items: SafeLedgerEntry[]; nextCursor: string | null }> {
     const limit = options?.limit ?? 20;
     const items = await this.prisma.ledgerEntry.findMany({
       where: { walletId },
       orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
       take: limit + 1,
+      select: SAFE_LEDGER_ENTRY_SELECT,
       ...(options?.cursor ? { cursor: { id: options.cursor }, skip: 1 } : {}),
     });
 

@@ -6,7 +6,7 @@ import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe';
 import { DASHBOARD_TIMESERIES_DEFAULT_DAYS } from './dashboard.constants';
 import { DashboardService } from './dashboard.service';
 import {
-  DashboardTimeseriesQuery,
+  DashboardTimeseriesQueryDto,
   dashboardTimeseriesQuerySchema,
 } from './dto/dashboard-timeseries-query.schema';
 
@@ -27,7 +27,7 @@ export class DashboardController {
   @ApiOperation({ summary: 'Série diária de coins emitidos e resgatados nos últimos N dias' })
   getTimeseries(
     @TenantOrganizationId() organizationId: string,
-    @Query(new ZodValidationPipe(dashboardTimeseriesQuerySchema)) query: DashboardTimeseriesQuery,
+    @Query(new ZodValidationPipe(dashboardTimeseriesQuerySchema)) query: DashboardTimeseriesQueryDto,
   ) {
     return this.dashboardService.getTimeseries(
       organizationId,

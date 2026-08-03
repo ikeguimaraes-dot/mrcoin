@@ -9,9 +9,9 @@ import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe';
 import { AdminJwtPayload } from '../../common/guards/jwt-payload.types';
 import { AdminInvitesService } from './admin-invites.service';
 import { RequestMeta } from '../auth/token.service';
-import { InviteAdminInput, inviteAdminSchema } from './dto/invite-admin.schema';
-import { AcceptInviteInput, acceptInviteSchema } from './dto/accept-invite.schema';
-import { ChangeRoleInput, changeRoleSchema } from './dto/change-role.schema';
+import { InviteAdminDto, inviteAdminSchema } from './dto/invite-admin.schema';
+import { AcceptInviteDto, acceptInviteSchema } from './dto/accept-invite.schema';
+import { ChangeRoleDto, changeRoleSchema } from './dto/change-role.schema';
 
 function requestMeta(request: Request): RequestMeta {
   return { ip: request.ip, userAgent: request.headers['user-agent'] };
@@ -32,7 +32,7 @@ export class AdminInvitesController {
   @ApiOperation({ summary: 'Convida um novo AdminUser pra organização do chamador' })
   invite(
     @CurrentAdmin() admin: AdminJwtPayload,
-    @Body(new ZodValidationPipe(inviteAdminSchema)) body: InviteAdminInput,
+    @Body(new ZodValidationPipe(inviteAdminSchema)) body: InviteAdminDto,
   ) {
     return this.adminInvitesService.invite(toCallerIdentity(admin), body);
   }
@@ -46,7 +46,7 @@ export class AdminInvitesController {
   })
   accept(
     @Param('token') token: string,
-    @Body(new ZodValidationPipe(acceptInviteSchema)) body: AcceptInviteInput,
+    @Body(new ZodValidationPipe(acceptInviteSchema)) body: AcceptInviteDto,
     @Req() request: Request,
   ) {
     return this.adminInvitesService.accept(token, body, requestMeta(request));
@@ -59,7 +59,7 @@ export class AdminInvitesController {
   changeRole(
     @CurrentAdmin() admin: AdminJwtPayload,
     @Param('id') targetAdminId: string,
-    @Body(new ZodValidationPipe(changeRoleSchema)) body: ChangeRoleInput,
+    @Body(new ZodValidationPipe(changeRoleSchema)) body: ChangeRoleDto,
   ) {
     return this.adminInvitesService.changeRole(toCallerIdentity(admin), targetAdminId, body);
   }

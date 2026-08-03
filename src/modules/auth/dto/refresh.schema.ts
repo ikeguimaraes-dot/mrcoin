@@ -1,3 +1,4 @@
+import { createZodDto } from 'nestjs-zod';
 import { z } from 'zod';
 
 export const refreshSchema = z.object({
@@ -5,3 +6,4 @@ export const refreshSchema = z.object({
 });
 
 export type RefreshInput = z.infer<typeof refreshSchema>;
+export class RefreshDto extends createZodDto(refreshSchema) {}

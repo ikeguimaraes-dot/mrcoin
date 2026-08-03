@@ -1,3 +1,4 @@
+import { createZodDto } from 'nestjs-zod';
 import { z } from 'zod';
 
 export const verifyMfaSchema = z.object({
@@ -5,3 +6,4 @@ export const verifyMfaSchema = z.object({
 });
 
 export type VerifyMfaInput = z.infer<typeof verifyMfaSchema>;
+export class VerifyMfaDto extends createZodDto(verifyMfaSchema) {}

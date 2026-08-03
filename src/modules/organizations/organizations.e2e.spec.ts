@@ -97,6 +97,8 @@ describe('GET/PATCH /organizations/me', () => {
       .expect(200);
 
     expect((response.body as OrganizationResponseBody).id).toBe(viewer.organizationId);
+    // SEGURANÇA: asaasCustomerId é referência interna do PSP — nunca sai na resposta HTTP.
+    expect(response.body).not.toHaveProperty('asaasCustomerId');
   });
 
   it('OWNER atualiza nome da organização e a mudança fica registrada no audit log', async () => {
@@ -160,6 +162,8 @@ describe('GET /organizations/audit-log', () => {
     for (const item of items) {
       expect(item.organizationId).toBe(ownerA.organizationId);
       expect(item.action).toBe('ORGANIZATION_UPDATED');
+      // SEGURANÇA: ip é PII do ator — nunca sai na resposta HTTP do audit log.
+      expect(item).not.toHaveProperty('ip');
     }
   });
 

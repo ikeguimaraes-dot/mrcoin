@@ -1,3 +1,4 @@
+import { createZodDto } from 'nestjs-zod';
 import { z } from 'zod';
 
 export const walletEntriesQuerySchema = z.object({
@@ -7,3 +8,4 @@ export const walletEntriesQuerySchema = z.object({
 });
 
 export type WalletEntriesQuery = z.infer<typeof walletEntriesQuerySchema>;
+export class WalletEntriesQueryDto extends createZodDto(walletEntriesQuerySchema) {}

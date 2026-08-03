@@ -5,7 +5,7 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe';
 import { UserJwtPayload } from '../../common/guards/jwt-payload.types';
 import { DevicesService } from './devices.service';
-import { RegisterDeviceInput, registerDeviceSchema } from './dto/register-device.schema';
+import { RegisterDeviceDto, registerDeviceSchema } from './dto/register-device.schema';
 
 @ApiTags('users')
 @Controller('devices')
@@ -18,7 +18,7 @@ export class DevicesController {
   @ApiOperation({ summary: 'Registra (ou atualiza) o device do usuário autenticado — upsert por fingerprint' })
   register(
     @CurrentUser() user: UserJwtPayload,
-    @Body(new ZodValidationPipe(registerDeviceSchema)) body: RegisterDeviceInput,
+    @Body(new ZodValidationPipe(registerDeviceSchema)) body: RegisterDeviceDto,
   ) {
     return this.devicesService.register(user.sub, body);
   }

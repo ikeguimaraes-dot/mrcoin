@@ -6,7 +6,7 @@ import { TenantOrganizationId } from '../../common/decorators/tenant-organizatio
 import { AuditAction } from '../../common/decorators/audit-action.decorator';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe';
 import { OrganizationsService } from './organizations.service';
-import { UpdateOrganizationInput, updateOrganizationSchema } from './dto/update-organization.schema';
+import { UpdateOrganizationDto, updateOrganizationSchema } from './dto/update-organization.schema';
 
 @ApiTags('organizations')
 @Controller('organizations')
@@ -26,7 +26,7 @@ export class OrganizationsController {
   @ApiOperation({ summary: 'Atualiza nome/plano da organização (somente OWNER)' })
   updateMyOrganization(
     @TenantOrganizationId() organizationId: string,
-    @Body(new ZodValidationPipe(updateOrganizationSchema)) body: UpdateOrganizationInput,
+    @Body(new ZodValidationPipe(updateOrganizationSchema)) body: UpdateOrganizationDto,
   ) {
     return this.organizationsService.update(organizationId, body);
   }

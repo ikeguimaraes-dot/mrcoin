@@ -21,13 +21,13 @@ import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe';
 import { AdminJwtPayload } from '../../common/guards/jwt-payload.types';
 import { DistributionsService } from './distributions.service';
 import { DistributionsCsvService } from './distributions-csv.service';
-import { CreateDistributionInput, createDistributionSchema } from './dto/create-distribution.schema';
-import { UploadDistributionCsvInput, uploadDistributionCsvSchema } from './dto/upload-distribution-csv.schema';
+import { CreateDistributionDto, createDistributionSchema } from './dto/create-distribution.schema';
+import { UploadDistributionCsvDto, uploadDistributionCsvSchema } from './dto/upload-distribution-csv.schema';
 import {
-  ListDistributionItemsQuery,
+  ListDistributionItemsQueryDto,
   listDistributionItemsQuerySchema,
 } from './dto/list-distribution-items.schema';
-import { ListDistributionsQuery, listDistributionsQuerySchema } from './dto/list-distributions.schema';
+import { ListDistributionsQueryDto, listDistributionsQuerySchema } from './dto/list-distributions.schema';
 
 function requireIdempotencyKey(idempotencyKey: string | undefined): string {
   if (!idempotencyKey?.trim()) {
@@ -56,7 +56,7 @@ export class DistributionsController {
     @TenantOrganizationId() organizationId: string,
     @CurrentAdmin() admin: AdminJwtPayload,
     @Headers('idempotency-key') idempotencyKey: string | undefined,
-    @Body(new ZodValidationPipe(createDistributionSchema)) body: CreateDistributionInput,
+    @Body(new ZodValidationPipe(createDistributionSchema)) body: CreateDistributionDto,
   ) {
     return this.distributionsService.distributeIndividual(
       organizationId,
@@ -77,7 +77,7 @@ export class DistributionsController {
     @TenantOrganizationId() organizationId: string,
     @CurrentAdmin() admin: AdminJwtPayload,
     @Headers('idempotency-key') idempotencyKey: string | undefined,
-    @Body(new ZodValidationPipe(uploadDistributionCsvSchema)) body: UploadDistributionCsvInput,
+    @Body(new ZodValidationPipe(uploadDistributionCsvSchema)) body: UploadDistributionCsvDto,
     @UploadedFile() file: Express.Multer.File | undefined,
   ) {
     return this.distributionsCsvService.uploadAndValidate(
@@ -102,7 +102,7 @@ export class DistributionsController {
   @ApiOperation({ summary: 'Lista as distribuições da organização do chamador' })
   listDistributions(
     @TenantOrganizationId() organizationId: string,
-    @Query(new ZodValidationPipe(listDistributionsQuerySchema)) query: ListDistributionsQuery,
+    @Query(new ZodValidationPipe(listDistributionsQuerySchema)) query: ListDistributionsQueryDto,
   ) {
     return this.distributionsService.listDistributions(organizationId, query);
   }
@@ -113,7 +113,7 @@ export class DistributionsController {
   async getDistribution(
     @TenantOrganizationId() organizationId: string,
     @Param('id') id: string,
-    @Query(new ZodValidationPipe(listDistributionItemsQuerySchema)) query: ListDistributionItemsQuery,
+    @Query(new ZodValidationPipe(listDistributionItemsQuerySchema)) query: ListDistributionItemsQueryDto,
   ) {
     const distribution = await this.distributionsService.getDistribution(organizationId, id);
     const items = await this.distributionsService.listItems(id, query.cursor, query.limit);

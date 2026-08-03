@@ -345,7 +345,16 @@ describe('fluxo completo: upload -> confirm -> processamento -> minimização de
       .attach('file', Buffer.from(csv), 'minimizacao.csv')
       .expect(201);
 
-    const distributionId = (upload.body as GetDistributionResponseBody).distribution.id;
+    const uploadBody = upload.body as GetDistributionResponseBody;
+    const distributionId = uploadBody.distribution.id;
+
+    // SEGURANÇA: a resposta HTTP do upload nunca pode incluir cpfHash/cpfEncrypted, nem nas
+    // linhas FAILED (que no banco mantêm os dois — ver asserções abaixo, direto no Prisma).
+    // A minimização é sobre o que sai pra fora, não sobre apagar o dado internamente.
+    for (const item of uploadBody.items.items) {
+      expect(item).not.toHaveProperty('cpfHash');
+      expect(item).not.toHaveProperty('cpfEncrypted');
+    }
 
     await request(server)
       .post(`/admin/distributions/${distributionId}/confirm`)

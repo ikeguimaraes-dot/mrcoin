@@ -190,15 +190,16 @@ model AdminUser {
 /// pertence diretamente a uma organização — o vínculo é via Membership,
 /// já que a mesma pessoa pode participar de várias empresas.
 model User {
-  id           String     @id @default(cuid())
-  cpfEncrypted String
-  cpfHash      String     @unique
-  name         String
-  phone        String?
-  email        String?
-  status       UserStatus @default(ACTIVE)
-  createdAt    DateTime   @default(now())
-  updatedAt    DateTime   @updatedAt
+  id                   String     @id @default(cuid())
+  cpfEncrypted         String
+  cpfHash              String     @unique
+  name                 String
+  phone                String?
+  email                String?
+  status               UserStatus @default(ACTIVE)
+  notificationsEnabled Boolean    @default(true)
+  createdAt            DateTime   @default(now())
+  updatedAt            DateTime   @updatedAt
 
   memberships Membership[]
   devices     Device[]
@@ -263,6 +264,23 @@ model UserSignupRequest {
   createdAt      DateTime       @default(now())
 
   @@index([cpfHash, organizationId])
+}
+
+/// Pedido de OTP pra LOGIN (usuário que já existe) — mais enxuto que UserSignupRequest
+/// de propósito: login não cria/vincula nada, então não tem organizationId nem os campos
+/// de join-em-org (membershipType, externalRef, name/phone/email do formulário). O OTP
+/// sempre vai pro e-mail já cadastrado no User (LoginService), nunca aceita destino do
+/// request — sem "estado pendente" de contato pra promover, como UserSignupRequest tem.
+model UserLoginRequest {
+  id         String    @id @default(cuid())
+  cpfHash    String
+  codeHash   String
+  attempts   Int       @default(0)
+  expiresAt  DateTime
+  consumedAt DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@index([cpfHash])
 }
 
 /// Carteira de coins de um Membership. `cachedBalance` e `version` só

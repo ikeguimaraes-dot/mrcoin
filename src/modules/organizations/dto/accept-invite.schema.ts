@@ -1,3 +1,4 @@
+import { createZodDto } from 'nestjs-zod';
 import { z } from 'zod';
 
 export const acceptInviteSchema = z.object({
@@ -10,3 +11,4 @@ export const acceptInviteSchema = z.object({
 });
 
 export type AcceptInviteInput = z.infer<typeof acceptInviteSchema>;
+export class AcceptInviteDto extends createZodDto(acceptInviteSchema) {}

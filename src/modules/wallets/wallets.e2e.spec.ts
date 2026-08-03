@@ -231,4 +231,32 @@ describe('GET /wallet/entries', () => {
     expect(secondBody.items).toHaveLength(1);
     expect(secondBody.nextCursor).toBeNull();
   });
+
+  it('SEGURANÇA: nunca inclui hash/prevHash/idempotencyKey — auditoria interna do ledger não sai pra fora', async () => {
+    const org = await createOrg();
+    const { userId, walletId } = await createUserWithWallet(org.id);
+
+    await ledgerService.post({
+      walletId,
+      type: 'CREDIT',
+      amount: 10,
+      referenceType: 'MANUAL_ADJUSTMENT',
+      referenceId: randomUUID(),
+      description: 'Entry',
+      idempotencyKey: randomUUID(),
+    });
+
+    const token = await tokenFor(userId);
+    const response = await request(server)
+      .get('/wallet/entries')
+      .query({ organizationId: org.id })
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+
+    const body = response.body as EntriesResponseBody;
+    expect(body.items).toHaveLength(1);
+    expect(body.items[0]).not.toHaveProperty('hash');
+    expect(body.items[0]).not.toHaveProperty('prevHash');
+    expect(body.items[0]).not.toHaveProperty('idempotencyKey');
+  });
 });

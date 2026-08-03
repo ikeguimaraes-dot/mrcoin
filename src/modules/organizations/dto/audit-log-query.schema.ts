@@ -1,3 +1,4 @@
+import { createZodDto } from 'nestjs-zod';
 import { z } from 'zod';
 
 export const auditLogQuerySchema = z.object({
@@ -10,3 +11,4 @@ export const auditLogQuerySchema = z.object({
 });
 
 export type AuditLogQuery = z.infer<typeof auditLogQuerySchema>;
+export class AuditLogQueryDto extends createZodDto(auditLogQuerySchema) {}

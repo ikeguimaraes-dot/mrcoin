@@ -1,3 +1,4 @@
+import { createZodDto } from 'nestjs-zod';
 import { z } from 'zod';
 
 export const dashboardTimeseriesQuerySchema = z.object({
@@ -5,3 +6,4 @@ export const dashboardTimeseriesQuerySchema = z.object({
 });
 
 export type DashboardTimeseriesQuery = z.infer<typeof dashboardTimeseriesQuerySchema>;
+export class DashboardTimeseriesQueryDto extends createZodDto(dashboardTimeseriesQuerySchema) {}

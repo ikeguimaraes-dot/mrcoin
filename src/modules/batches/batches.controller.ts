@@ -6,8 +6,8 @@ import { TenantOrganizationId } from '../../common/decorators/tenant-organizatio
 import { AuditAction } from '../../common/decorators/audit-action.decorator';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe';
 import { BatchesService } from './batches.service';
-import { CreateBatchInput, createBatchSchema } from './dto/create-batch.schema';
-import { ListBatchesQuery, listBatchesQuerySchema } from './dto/list-batches.schema';
+import { CreateBatchDto, createBatchSchema } from './dto/create-batch.schema';
+import { ListBatchesQueryDto, listBatchesQuerySchema } from './dto/list-batches.schema';
 
 @ApiTags('batches')
 @Controller('admin/batches')
@@ -22,7 +22,7 @@ export class BatchesController {
   createBatch(
     @TenantOrganizationId() organizationId: string,
     @Headers('idempotency-key') idempotencyKey: string | undefined,
-    @Body(new ZodValidationPipe(createBatchSchema)) body: CreateBatchInput,
+    @Body(new ZodValidationPipe(createBatchSchema)) body: CreateBatchDto,
   ) {
     if (!idempotencyKey?.trim()) {
       throw new BadRequestException({
@@ -39,7 +39,7 @@ export class BatchesController {
   @ApiOperation({ summary: 'Lista os lotes de coins da organização do chamador' })
   listBatches(
     @TenantOrganizationId() organizationId: string,
-    @Query(new ZodValidationPipe(listBatchesQuerySchema)) query: ListBatchesQuery,
+    @Query(new ZodValidationPipe(listBatchesQuerySchema)) query: ListBatchesQueryDto,
   ) {
     return this.batchesService.listBatches(organizationId, query);
   }

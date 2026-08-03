@@ -127,11 +127,18 @@ describe('POST /admin/batches — fluxo completo com PSP em sandbox', () => {
     expect(created.batch.organizationId).toBe(owner.organizationId);
     expect(created.batch.totalCoins).toBe(10000);
     expect(created.batch.remainingCoins).toBe(10000);
-    expect(created.batch.pspChargeId).toBeTruthy();
     expect(created.pix?.qrCodeImage.length).toBeGreaterThan(0);
     expect(created.pix?.copyPasteCode.length).toBeGreaterThan(0);
 
-    const pspChargeId = created.batch.pspChargeId as string;
+    // SEGURANÇA: pspChargeId e idempotencyKey são referência interna do PSP / chave de
+    // replay — nunca saem na resposta HTTP. O valor real só é lido direto do banco abaixo,
+    // pra montar o payload do webhook (simulando o PSP, que não passa pela nossa API).
+    expect(created.batch).not.toHaveProperty('pspChargeId');
+    expect(created.batch).not.toHaveProperty('idempotencyKey');
+
+    const createdInDb = await prisma.coinBatch.findUniqueOrThrow({ where: { id: created.batch.id } });
+    const pspChargeId = createdInDb.pspChargeId as string;
+    expect(pspChargeId).toBeTruthy();
 
     // Replay idempotente — mesma chave e mesmo body não cria um segundo lote nem uma
     // segunda cobrança no PSP.
@@ -144,7 +151,9 @@ describe('POST /admin/batches — fluxo completo com PSP em sandbox', () => {
 
     const replayed = replayResponse.body as CreateBatchResponseBody;
     expect(replayed.batch.id).toBe(created.batch.id);
-    expect(replayed.batch.pspChargeId).toBe(pspChargeId);
+    expect(replayed.batch).not.toHaveProperty('pspChargeId');
+    const replayedInDb = await prisma.coinBatch.findUniqueOrThrow({ where: { id: replayed.batch.id } });
+    expect(replayedInDb.pspChargeId).toBe(pspChargeId);
     expect(replayed.pix?.qrCodeImage.length).toBeGreaterThan(0);
 
     // Webhook confirma o pagamento — lote vira PAID e um AuditLog de sistema é gravado.

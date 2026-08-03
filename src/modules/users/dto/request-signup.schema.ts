@@ -1,4 +1,5 @@
 import { MembershipType } from '@prisma/client';
+import { createZodDto } from 'nestjs-zod';
 import { z } from 'zod';
 
 export const requestSignupSchema = z.object({
@@ -12,3 +13,4 @@ export const requestSignupSchema = z.object({
 });
 
 export type RequestSignupInput = z.infer<typeof requestSignupSchema>;
+export class RequestSignupDto extends createZodDto(requestSignupSchema) {}

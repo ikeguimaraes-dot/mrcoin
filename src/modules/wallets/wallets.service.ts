@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
-import { LedgerEntry } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { LedgerService } from '../ledger/ledger.service';
+import { SafeLedgerEntry } from '../ledger/safe-ledger-entry.util';
 import { MembershipNotFoundException } from './exceptions/membership-not-found.exception';
 
 export interface ExpiringBatch {
@@ -45,7 +45,7 @@ export class WalletsService {
     userId: string,
     organizationId: string,
     options?: { cursor?: string; limit?: number },
-  ): Promise<{ items: LedgerEntry[]; nextCursor: string | null }> {
+  ): Promise<{ items: SafeLedgerEntry[]; nextCursor: string | null }> {
     const walletId = await this.resolveWalletId(userId, organizationId);
     return this.ledgerService.getEntries(walletId, options);
   }

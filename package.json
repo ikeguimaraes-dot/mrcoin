@@ -40,6 +40,7 @@
     "csv-parse": "^7.0.1",
     "ioredis": "^5.11.1",
     "multer": "^2.2.0",
+    "nestjs-zod": "^5.5.0",
     "otplib": "^13.4.1",
     "prisma": "^6.0.0",
     "qrcode": "^1.5.4",

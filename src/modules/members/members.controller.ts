@@ -4,9 +4,9 @@ import { AdminAuth } from '../../common/decorators/admin-auth.decorator';
 import { TenantOrganizationId } from '../../common/decorators/tenant-organization-id.decorator';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe';
 import { MembersService } from './members.service';
-import { ListMembersQuery, listMembersQuerySchema } from './dto/list-members-query.schema';
+import { ListMembersQueryDto, listMembersQuerySchema } from './dto/list-members-query.schema';
 import {
-  ListMemberEntriesQuery,
+  ListMemberEntriesQueryDto,
   listMemberEntriesQuerySchema,
 } from './dto/list-member-entries-query.schema';
 
@@ -20,7 +20,7 @@ export class MembersController {
   @ApiOperation({ summary: 'Diretório paginado de membros da organização, com filtro opcional por CPF' })
   listMembers(
     @TenantOrganizationId() organizationId: string,
-    @Query(new ZodValidationPipe(listMembersQuerySchema)) query: ListMembersQuery,
+    @Query(new ZodValidationPipe(listMembersQuerySchema)) query: ListMembersQueryDto,
   ) {
     return this.membersService.listMembers(organizationId, query);
   }
@@ -38,7 +38,7 @@ export class MembersController {
   getMemberEntries(
     @TenantOrganizationId() organizationId: string,
     @Param('membershipId') membershipId: string,
-    @Query(new ZodValidationPipe(listMemberEntriesQuerySchema)) query: ListMemberEntriesQuery,
+    @Query(new ZodValidationPipe(listMemberEntriesQuerySchema)) query: ListMemberEntriesQueryDto,
   ) {
     return this.membersService.getMemberEntries(organizationId, membershipId, query);
   }

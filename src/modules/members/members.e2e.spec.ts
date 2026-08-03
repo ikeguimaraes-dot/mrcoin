@@ -332,6 +332,33 @@ describe('GET /admin/members/:membershipId/entries', () => {
     expect(body.nextCursor).toBe(direct.nextCursor);
   });
 
+  it('SEGURANÇA: nunca inclui hash/prevHash/idempotencyKey', async () => {
+    const org = await createAdmin('OWNER');
+    const member = await createMemberWithWallet(org.organizationId);
+
+    await ledgerService.post({
+      walletId: member.walletId,
+      type: 'CREDIT',
+      amount: 10,
+      referenceType: 'MANUAL_ADJUSTMENT',
+      referenceId: randomUUID(),
+      description: 'Entry',
+      idempotencyKey: randomUUID(),
+    });
+
+    const token = await tokenFor(org);
+    const response = await request(server)
+      .get(`/admin/members/${member.membershipId}/entries`)
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+
+    const body = response.body as EntriesResponseBody;
+    expect(body.items).toHaveLength(1);
+    expect(body.items[0]).not.toHaveProperty('hash');
+    expect(body.items[0]).not.toHaveProperty('prevHash');
+    expect(body.items[0]).not.toHaveProperty('idempotencyKey');
+  });
+
   it('membro de outra organização retorna 404', async () => {
     const orgA = await createAdmin('OWNER');
     const orgB = await createAdmin('OWNER');

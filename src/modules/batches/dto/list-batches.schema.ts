@@ -1,3 +1,4 @@
+import { createZodDto } from 'nestjs-zod';
 import { z } from 'zod';
 
 export const listBatchesQuerySchema = z.object({
@@ -6,3 +7,4 @@ export const listBatchesQuerySchema = z.object({
 });
 
 export type ListBatchesQuery = z.infer<typeof listBatchesQuerySchema>;
+export class ListBatchesQueryDto extends createZodDto(listBatchesQuerySchema) {}

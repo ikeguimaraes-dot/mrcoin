@@ -12,12 +12,12 @@ import { MfaService } from './mfa.service';
 import { AdminDirectoryService } from './admin-directory.service';
 import { MfaChallengeGuard } from './guards/mfa-challenge.guard';
 import { MfaSetupGuard } from './guards/mfa-setup.guard';
-import { LoginInput, loginSchema } from './dto/login.schema';
-import { VerifyMfaInput, verifyMfaSchema } from './dto/verify-mfa.schema';
-import { EnableMfaInput, enableMfaSchema } from './dto/enable-mfa.schema';
-import { RefreshInput, refreshSchema } from './dto/refresh.schema';
-import { LogoutInput, logoutSchema } from './dto/logout.schema';
-import { ListAdminsQuery, listAdminsQuerySchema } from './dto/list-admins.schema';
+import { LoginDto, loginSchema } from './dto/login.schema';
+import { VerifyMfaDto, verifyMfaSchema } from './dto/verify-mfa.schema';
+import { EnableMfaDto, enableMfaSchema } from './dto/enable-mfa.schema';
+import { RefreshDto, refreshSchema } from './dto/refresh.schema';
+import { LogoutDto, logoutSchema } from './dto/logout.schema';
+import { ListAdminsQueryDto, listAdminsQuerySchema } from './dto/list-admins.schema';
 import { RequestMeta } from './token.service';
 
 function requestMeta(request: Request): RequestMeta {
@@ -37,7 +37,7 @@ export class AuthController {
   @UseGuards(LoginRateLimitGuard)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Login de AdminUser (e-mail + senha)' })
-  login(@Body(new ZodValidationPipe(loginSchema)) body: LoginInput, @Req() request: Request) {
+  login(@Body(new ZodValidationPipe(loginSchema)) body: LoginDto, @Req() request: Request) {
     return this.authService.login(body.email, body.password, requestMeta(request));
   }
 
@@ -53,7 +53,7 @@ export class AuthController {
   @UseGuards(MfaSetupGuard)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Confirma o primeiro código TOTP e ativa o MFA' })
-  mfaEnable(@Body(new ZodValidationPipe(enableMfaSchema)) body: EnableMfaInput, @Req() request: Request) {
+  mfaEnable(@Body(new ZodValidationPipe(enableMfaSchema)) body: EnableMfaDto, @Req() request: Request) {
     return this.authService.completeMfaSetup(
       request.mfaSetupAdminId as string,
       body.code,
@@ -65,7 +65,7 @@ export class AuthController {
   @UseGuards(MfaChallengeGuard)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Completa o login verificando o código TOTP' })
-  mfaVerify(@Body(new ZodValidationPipe(verifyMfaSchema)) body: VerifyMfaInput, @Req() request: Request) {
+  mfaVerify(@Body(new ZodValidationPipe(verifyMfaSchema)) body: VerifyMfaDto, @Req() request: Request) {
     return this.authService.completeMfaLogin(
       request.mfaChallengeAdminId as string,
       body.code,
@@ -76,14 +76,14 @@ export class AuthController {
   @Post('refresh')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Rotaciona o refresh token (detecta reuso)' })
-  refresh(@Body(new ZodValidationPipe(refreshSchema)) body: RefreshInput, @Req() request: Request) {
+  refresh(@Body(new ZodValidationPipe(refreshSchema)) body: RefreshDto, @Req() request: Request) {
     return this.authService.refresh(body.refreshToken, requestMeta(request));
   }
 
   @Post('logout')
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Revoga o refresh token informado' })
-  async logout(@Body(new ZodValidationPipe(logoutSchema)) body: LogoutInput): Promise<void> {
+  async logout(@Body(new ZodValidationPipe(logoutSchema)) body: LogoutDto): Promise<void> {
     await this.authService.logout(body.refreshToken);
   }
 
@@ -98,7 +98,7 @@ export class AuthController {
   @AdminAuth()
   @ApiOperation({ summary: 'Lista os AdminUsers da organização do chamador (nunca de outra)' })
   listAdmins(
-    @Query(new ZodValidationPipe(listAdminsQuerySchema)) query: ListAdminsQuery,
+    @Query(new ZodValidationPipe(listAdminsQuerySchema)) query: ListAdminsQueryDto,
     @TenantOrganizationId() organizationId: string,
   ) {
     return this.adminDirectory.listByOrganization(organizationId, query);
