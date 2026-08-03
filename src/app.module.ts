@@ -21,6 +21,8 @@ import { BillingModule } from './modules/billing/billing.module';
 import { BatchesModule } from './modules/batches/batches.module';
 import { WebhooksModule } from './modules/webhooks/webhooks.module';
 import { DistributionsModule } from './modules/distributions/distributions.module';
+import { DashboardModule } from './modules/dashboard/dashboard.module';
+import { MembersModule } from './modules/members/members.module';
 
 @Module({
   imports: [
@@ -59,6 +61,8 @@ import { DistributionsModule } from './modules/distributions/distributions.modul
     BatchesModule,
     WebhooksModule,
     DistributionsModule,
+    DashboardModule,
+    MembersModule,
   ],
   providers: [
     { provide: APP_FILTER, useClass: AllExceptionsFilter },

@@ -17,6 +17,11 @@ interface CreateDistributionResponseBody {
   item: DistributionItem & { ledgerEntries: LedgerEntry[] };
 }
 
+interface ListDistributionsResponseBody {
+  items: Distribution[];
+  nextCursor: string | null;
+}
+
 interface ErrorResponseBody {
   code: string;
 }
@@ -401,5 +406,105 @@ describe('POST /admin/distributions', () => {
 
     const user = await prisma.user.findUniqueOrThrow({ where: { cpfHash: hashCpf(cpf) } });
     createdUserIds.push(user.id);
+  });
+
+  it('campo reason: aparece na resposta, fica null se omitido, e string vazia após trim é 400', async () => {
+    const owner = await createAdmin('OWNER');
+    const ownerToken = await tokenFor(owner);
+    await createPaidBatch(owner.organizationId, 1000, 30);
+
+    const cpfWithReason = randomCpf();
+    const withReason = await request(server)
+      .post('/admin/distributions')
+      .set('Authorization', `Bearer ${ownerToken}`)
+      .set('Idempotency-Key', `test-${randomUUID()}`)
+      .send({ cpf: cpfWithReason, name: 'Com motivo', amount: 10, membershipType: 'CUSTOMER', reason: 'Bônus aniversário' })
+      .expect(201);
+    expect((withReason.body as CreateDistributionResponseBody).distribution.reason).toBe('Bônus aniversário');
+    const userWithReason = await prisma.user.findUniqueOrThrow({ where: { cpfHash: hashCpf(cpfWithReason) } });
+    createdUserIds.push(userWithReason.id);
+
+    const cpfWithoutReason = randomCpf();
+    const withoutReason = await request(server)
+      .post('/admin/distributions')
+      .set('Authorization', `Bearer ${ownerToken}`)
+      .set('Idempotency-Key', `test-${randomUUID()}`)
+      .send({ cpf: cpfWithoutReason, name: 'Sem motivo', amount: 10, membershipType: 'CUSTOMER' })
+      .expect(201);
+    expect((withoutReason.body as CreateDistributionResponseBody).distribution.reason).toBeNull();
+    const userWithoutReason = await prisma.user.findUniqueOrThrow({ where: { cpfHash: hashCpf(cpfWithoutReason) } });
+    createdUserIds.push(userWithoutReason.id);
+
+    const emptyReason = await request(server)
+      .post('/admin/distributions')
+      .set('Authorization', `Bearer ${ownerToken}`)
+      .set('Idempotency-Key', `test-${randomUUID()}`)
+      .send({ cpf: randomCpf(), name: 'Motivo vazio', amount: 10, membershipType: 'CUSTOMER', reason: '   ' })
+      .expect(400);
+    expect((emptyReason.body as ErrorResponseBody).code).toBe('VALIDATION_ERROR');
+  });
+});
+
+describe('GET /admin/distributions', () => {
+  it('pagina por cursor, mais recente primeiro', async () => {
+    const owner = await createAdmin('OWNER');
+    const ownerToken = await tokenFor(owner);
+    await createPaidBatch(owner.organizationId, 1000, 30);
+
+    for (let i = 0; i < 3; i += 1) {
+      const cpf = randomCpf();
+      await request(server)
+        .post('/admin/distributions')
+        .set('Authorization', `Bearer ${ownerToken}`)
+        .set('Idempotency-Key', `test-${randomUUID()}`)
+        .send({ cpf, name: `Fulano ${i}`, amount: 10, membershipType: 'CUSTOMER' })
+        .expect(201);
+      const user = await prisma.user.findUniqueOrThrow({ where: { cpfHash: hashCpf(cpf) } });
+      createdUserIds.push(user.id);
+    }
+
+    const firstPage = await request(server)
+      .get('/admin/distributions')
+      .query({ limit: 2 })
+      .set('Authorization', `Bearer ${ownerToken}`)
+      .expect(200);
+
+    const firstBody = firstPage.body as ListDistributionsResponseBody;
+    expect(firstBody.items).toHaveLength(2);
+    expect(firstBody.nextCursor).toBeTruthy();
+
+    const secondPage = await request(server)
+      .get('/admin/distributions')
+      .query({ limit: 2, cursor: firstBody.nextCursor as string })
+      .set('Authorization', `Bearer ${ownerToken}`)
+      .expect(200);
+
+    const secondBody = secondPage.body as ListDistributionsResponseBody;
+    expect(secondBody.items).toHaveLength(1);
+    expect(secondBody.nextCursor).toBeNull();
+  });
+
+  it('isola por organização', async () => {
+    const orgA = await createAdmin('OWNER');
+    const orgB = await createAdmin('OWNER');
+    const tokenA = await tokenFor(orgA);
+    await createPaidBatch(orgB.organizationId, 1000, 30);
+    const cpfInB = randomCpf();
+
+    await request(server)
+      .post('/admin/distributions')
+      .set('Authorization', `Bearer ${await tokenFor(orgB)}`)
+      .set('Idempotency-Key', `test-${randomUUID()}`)
+      .send({ cpf: cpfInB, name: 'Em B', amount: 10, membershipType: 'CUSTOMER' })
+      .expect(201);
+    const userInB = await prisma.user.findUniqueOrThrow({ where: { cpfHash: hashCpf(cpfInB) } });
+    createdUserIds.push(userInB.id);
+
+    const response = await request(server)
+      .get('/admin/distributions')
+      .set('Authorization', `Bearer ${tokenA}`)
+      .expect(200);
+
+    expect((response.body as ListDistributionsResponseBody).items).toEqual([]);
   });
 });

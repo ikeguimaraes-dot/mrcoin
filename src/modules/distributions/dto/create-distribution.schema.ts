@@ -7,6 +7,7 @@ export const createDistributionSchema = z.object({
   amount: z.number().int().positive(),
   membershipType: z.nativeEnum(MembershipType),
   externalRef: z.string().optional(),
+  reason: z.string().trim().min(1).max(500).optional(),
 });
 
 export type CreateDistributionInput = z.infer<typeof createDistributionSchema>;

@@ -343,6 +343,7 @@ model Distribution {
   adminUserId    String
   adminUser      AdminUser          @relation(fields: [adminUserId], references: [id])
   csvFileUrl     String?
+  reason         String?
   totalItems     Int                @default(0)
   successItems   Int                @default(0)
   failedItems    Int                @default(0)

@@ -7,10 +7,16 @@ import { encryptCpf, hashCpf } from '../../common/crypto/cpf-crypto.util';
 import { NOTIFICATION_PORT, NotificationPort } from '../../common/notifications/notification.port';
 import { LedgerService } from '../ledger/ledger.service';
 import { CreateDistributionInput } from './dto/create-distribution.schema';
+import { ListDistributionsQuery } from './dto/list-distributions.schema';
 import { InsufficientCoinStockException } from './exceptions/insufficient-coin-stock.exception';
 import { IdempotencyConflictException } from './exceptions/idempotency-conflict.exception';
 import { DistributionNotPendingException } from './exceptions/distribution-not-pending.exception';
-import { DISTRIBUTION_ITEM_BATCH_SIZE, JOB_PROCESS_DISTRIBUTION, QUEUE_PROCESS_DISTRIBUTION } from './distributions.constants';
+import {
+  DISTRIBUTION_ITEM_BATCH_SIZE,
+  DISTRIBUTION_LIST_PAGE_SIZE,
+  JOB_PROCESS_DISTRIBUTION,
+  QUEUE_PROCESS_DISTRIBUTION,
+} from './distributions.constants';
 import { listDistributionItems } from './list-distribution-items.util';
 
 type TransactionClient = Prisma.TransactionClient;
@@ -110,6 +116,7 @@ export class DistributionsService {
         data: {
           organizationId,
           adminUserId,
+          reason: input.reason,
           totalItems: 1,
           successItems: 1,
           failedItems: 0,
@@ -282,6 +289,26 @@ export class DistributionsService {
 
   async listItems(distributionId: string, cursor: string | undefined, limit: number | undefined) {
     return listDistributionItems(this.prisma, distributionId, cursor, limit);
+  }
+
+  async listDistributions(
+    organizationId: string,
+    query: ListDistributionsQuery,
+  ): Promise<{ items: Distribution[]; nextCursor: string | null }> {
+    const limit = query.limit ?? DISTRIBUTION_LIST_PAGE_SIZE;
+
+    const items = await this.prisma.distribution.findMany({
+      where: { organizationId },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      take: limit + 1,
+      ...(query.cursor ? { cursor: { id: query.cursor }, skip: 1 } : {}),
+    });
+
+    const hasMore = items.length > limit;
+    const page = hasMore ? items.slice(0, limit) : items;
+    const last = page[page.length - 1];
+
+    return { items: page, nextCursor: hasMore && last ? last.id : null };
   }
 
   /** Processador do job BullMQ — pagina os itens PENDING em chunks e processa cada chunk em

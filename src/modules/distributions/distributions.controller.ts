@@ -27,6 +27,7 @@ import {
   ListDistributionItemsQuery,
   listDistributionItemsQuerySchema,
 } from './dto/list-distribution-items.schema';
+import { ListDistributionsQuery, listDistributionsQuerySchema } from './dto/list-distributions.schema';
 
 function requireIdempotencyKey(idempotencyKey: string | undefined): string {
   if (!idempotencyKey?.trim()) {
@@ -94,6 +95,16 @@ export class DistributionsController {
   @ApiOperation({ summary: 'Confirma o preview e dispara o processamento em massa via fila (OWNER/MANAGER)' })
   confirmDistribution(@TenantOrganizationId() organizationId: string, @Param('id') id: string) {
     return this.distributionsService.confirmBulkDistribution(organizationId, id);
+  }
+
+  @Get()
+  @AdminAuth()
+  @ApiOperation({ summary: 'Lista as distribuições da organização do chamador' })
+  listDistributions(
+    @TenantOrganizationId() organizationId: string,
+    @Query(new ZodValidationPipe(listDistributionsQuerySchema)) query: ListDistributionsQuery,
+  ) {
+    return this.distributionsService.listDistributions(organizationId, query);
   }
 
   @Get(':id')
