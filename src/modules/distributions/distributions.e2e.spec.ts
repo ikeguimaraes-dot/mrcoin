@@ -326,6 +326,13 @@ describe('POST /admin/distributions', () => {
     expect(retryBody.item.id).toBe(firstBody.item.id);
     expect(firstBody.item.ledgerEntries).toHaveLength(2);
 
+    // SEGURANÇA: replay de Idempotency-Key não pode vazar o Membership/User crus que a
+    // query de replay busca só pra validar o CPF (paramsMatch) — nem no nível de
+    // `distribution` (que não deveria carregar `items`) nem em `item` (que não deveria
+    // carregar `membership`, com cpfEncrypted/cpfHash/phone/email do User dentro).
+    expect(retryBody.distribution).not.toHaveProperty('items');
+    expect(retryBody.item).not.toHaveProperty('membership');
+
     const distributions = await prisma.distribution.count({ where: { idempotencyKey } });
     expect(distributions).toBe(1);
 

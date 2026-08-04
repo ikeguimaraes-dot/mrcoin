@@ -1,11 +1,12 @@
 import { Controller, Get, Query } from '@nestjs/common';
-import { ApiOperation, ApiTags } from '@nestjs/swagger';
+import { ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { AdminRole } from '@prisma/client';
 import { AdminAuth } from '../../common/decorators/admin-auth.decorator';
 import { TenantOrganizationId } from '../../common/decorators/tenant-organization-id.decorator';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe';
 import { AuditLogService } from './audit-log.service';
 import { AuditLogQueryDto, auditLogQuerySchema } from './dto/audit-log-query.schema';
+import { AuditLogListResponseDto } from './dto/audit-log-response.schema';
 
 @ApiTags('organizations')
 @Controller('organizations/audit-log')
@@ -15,6 +16,7 @@ export class AuditLogController {
   @Get()
   @AdminAuth(AdminRole.MANAGER)
   @ApiOperation({ summary: 'Consulta o audit log da organização do chamador, com filtros' })
+  @ApiOkResponse({ type: AuditLogListResponseDto })
   list(
     @TenantOrganizationId() organizationId: string,
     @Query(new ZodValidationPipe(auditLogQuerySchema)) query: AuditLogQueryDto,

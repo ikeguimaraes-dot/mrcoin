@@ -1,11 +1,12 @@
 import { Body, Controller, HttpCode, HttpStatus, Post, UseGuards } from '@nestjs/common';
-import { ApiOperation, ApiTags } from '@nestjs/swagger';
+import { ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { UserJwtGuard } from '../../common/guards/user-jwt.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe';
 import { UserJwtPayload } from '../../common/guards/jwt-payload.types';
 import { DevicesService } from './devices.service';
 import { RegisterDeviceDto, registerDeviceSchema } from './dto/register-device.schema';
+import { DeviceResponseDto } from './dto/device-response.schema';
 
 @ApiTags('users')
 @Controller('devices')
@@ -16,6 +17,7 @@ export class DevicesController {
   @UseGuards(UserJwtGuard)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Registra (ou atualiza) o device do usuário autenticado — upsert por fingerprint' })
+  @ApiOkResponse({ type: DeviceResponseDto })
   register(
     @CurrentUser() user: UserJwtPayload,
     @Body(new ZodValidationPipe(registerDeviceSchema)) body: RegisterDeviceDto,

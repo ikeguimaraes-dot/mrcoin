@@ -11,7 +11,7 @@ import {
   UseInterceptors,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
-import { ApiConsumes, ApiHeader, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { ApiConsumes, ApiCreatedResponse, ApiHeader, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { AdminRole } from '@prisma/client';
 import { AdminAuth } from '../../common/decorators/admin-auth.decorator';
 import { TenantOrganizationId } from '../../common/decorators/tenant-organization-id.decorator';
@@ -28,6 +28,11 @@ import {
   listDistributionItemsQuerySchema,
 } from './dto/list-distribution-items.schema';
 import { ListDistributionsQueryDto, listDistributionsQuerySchema } from './dto/list-distributions.schema';
+import { ListDistributionsResponseDto, DistributionResponseDto } from './dto/distribution-response.schema';
+import {
+  DistributeIndividualResponseDto,
+  DistributionWithItemsResponseDto,
+} from './dto/distribution-item-response.schema';
 
 function requireIdempotencyKey(idempotencyKey: string | undefined): string {
   if (!idempotencyKey?.trim()) {
@@ -52,6 +57,7 @@ export class DistributionsController {
   @AuditAction('DISTRIBUTION_CREATED')
   @ApiHeader({ name: 'Idempotency-Key', required: true })
   @ApiOperation({ summary: 'Credita coins pra um CPF, consumindo o lote que expira primeiro (OWNER/MANAGER)' })
+  @ApiCreatedResponse({ type: DistributeIndividualResponseDto })
   createDistribution(
     @TenantOrganizationId() organizationId: string,
     @CurrentAdmin() admin: AdminJwtPayload,
@@ -72,6 +78,7 @@ export class DistributionsController {
   @ApiConsumes('multipart/form-data')
   @ApiHeader({ name: 'Idempotency-Key', required: true })
   @ApiOperation({ summary: 'Upload de CSV pra distribuição em massa — valida e devolve preview, sem creditar nada (OWNER/MANAGER)' })
+  @ApiCreatedResponse({ type: DistributionWithItemsResponseDto })
   @UseInterceptors(FileInterceptor('file'))
   uploadCsv(
     @TenantOrganizationId() organizationId: string,
@@ -93,6 +100,7 @@ export class DistributionsController {
   @AdminAuth(AdminRole.OWNER, AdminRole.MANAGER)
   @AuditAction('DISTRIBUTION_CONFIRMED')
   @ApiOperation({ summary: 'Confirma o preview e dispara o processamento em massa via fila (OWNER/MANAGER)' })
+  @ApiCreatedResponse({ type: DistributionResponseDto })
   confirmDistribution(@TenantOrganizationId() organizationId: string, @Param('id') id: string) {
     return this.distributionsService.confirmBulkDistribution(organizationId, id);
   }
@@ -100,6 +108,7 @@ export class DistributionsController {
   @Get()
   @AdminAuth()
   @ApiOperation({ summary: 'Lista as distribuições da organização do chamador' })
+  @ApiOkResponse({ type: ListDistributionsResponseDto })
   listDistributions(
     @TenantOrganizationId() organizationId: string,
     @Query(new ZodValidationPipe(listDistributionsQuerySchema)) query: ListDistributionsQueryDto,
@@ -110,6 +119,7 @@ export class DistributionsController {
   @Get(':id')
   @AdminAuth()
   @ApiOperation({ summary: 'Progresso de uma distribuição (individual ou em massa) e suas linhas' })
+  @ApiOkResponse({ type: DistributionWithItemsResponseDto })
   async getDistribution(
     @TenantOrganizationId() organizationId: string,
     @Param('id') id: string,

@@ -56,7 +56,7 @@ describe('POST /devices', () => {
     const { userId, token } = await createUser();
     const fingerprint = `fp-${randomUUID()}`;
 
-    await request(server)
+    const response = await request(server)
       .post('/devices')
       .set('Authorization', `Bearer ${token}`)
       .send({ fingerprint, pushToken: 'push-token-1' })
@@ -65,6 +65,14 @@ describe('POST /devices', () => {
     const devices = await prisma.device.findMany({ where: { userId } });
     expect(devices).toHaveLength(1);
     expect(devices[0]?.pushToken).toBe('push-token-1');
+
+    // SEGURANÇA: pushToken é credencial de disparo de push (quem enviou já tem o valor) e
+    // userId é redundante com o JWT do chamador — nenhum dos dois sai na resposta HTTP,
+    // só id/fingerprint/createdAt/updatedAt.
+    expect(Object.keys(response.body as object).sort()).toEqual(['createdAt', 'fingerprint', 'id', 'updatedAt']);
+    expect((response.body as { fingerprint: string }).fingerprint).toBe(fingerprint);
+    expect(response.body).not.toHaveProperty('pushToken');
+    expect(response.body).not.toHaveProperty('userId');
   });
 
   it('reenviar com o mesmo fingerprint atualiza o pushToken em vez de duplicar', async () => {

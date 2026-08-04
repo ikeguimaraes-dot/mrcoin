@@ -1,7 +1,7 @@
 import { HttpException, Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
-import { CoinBatch, DistributionItem, LedgerEntry, Membership, Prisma, User } from '@prisma/client';
+import { CoinBatch, DistributionItem, LedgerEntry, Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { encryptCpf, hashCpf } from '../../common/crypto/cpf-crypto.util';
 import { NOTIFICATION_PORT, NotificationPort } from '../../common/notifications/notification.port';
@@ -32,7 +32,7 @@ const DISTRIBUTION_DESCRIPTION = 'Distribuição de coins';
 
 type ExistingDistribution = SafeDistribution & {
   items: (SafeDistributionItem & {
-    membership: (Membership & { user: User }) | null;
+    membership: { user: { cpfHash: string } } | null;
     ledgerEntries: SafeLedgerEntry[];
   })[];
 };
@@ -83,7 +83,7 @@ export class DistributionsService {
         items: {
           select: {
             ...SAFE_DISTRIBUTION_ITEM_SELECT,
-            membership: { include: { user: true } },
+            membership: { select: { user: { select: { cpfHash: true } } } },
             ledgerEntries: { select: SAFE_LEDGER_ENTRY_SELECT },
           },
         },
@@ -262,7 +262,13 @@ export class DistributionsService {
       throw new IdempotencyConflictException(idempotencyKey, { distributionId: existing.id });
     }
 
-    return { distribution: existing, item };
+    // Nunca devolver `items`/`membership` crus aqui: a query busca membership.user.cpfHash só
+    // pra validar o replay (paramsMatch acima) — sem esse strip, a resposta vazaria User inteiro
+    // (cpfEncrypted, cpfHash, phone, email) e o Membership, ao contrário do caminho feliz acima.
+    const { items: _items, ...distribution } = existing;
+    const { membership: _membership, ...safeItem } = item;
+
+    return { distribution, item: safeItem };
   }
 
   private async notifyBestEffort(userId: string, amount: number): Promise<void> {

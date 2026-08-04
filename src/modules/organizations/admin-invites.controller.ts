@@ -1,5 +1,5 @@
 import { Body, Controller, HttpCode, HttpStatus, Param, Patch, Post, Req } from '@nestjs/common';
-import { ApiOperation, ApiTags } from '@nestjs/swagger';
+import { ApiCreatedResponse, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { AdminRole } from '@prisma/client';
 import { Request } from 'express';
 import { AdminAuth } from '../../common/decorators/admin-auth.decorator';
@@ -12,6 +12,9 @@ import { RequestMeta } from '../auth/token.service';
 import { InviteAdminDto, inviteAdminSchema } from './dto/invite-admin.schema';
 import { AcceptInviteDto, acceptInviteSchema } from './dto/accept-invite.schema';
 import { ChangeRoleDto, changeRoleSchema } from './dto/change-role.schema';
+import { InviteResultResponseDto } from './dto/invite-result-response.schema';
+import { AdminProfileDto } from '../auth/dto/admin-summary.schema';
+import { AcceptInviteResponseDto } from './dto/accept-invite-response.schema';
 
 function requestMeta(request: Request): RequestMeta {
   return { ip: request.ip, userAgent: request.headers['user-agent'] };
@@ -30,6 +33,7 @@ export class AdminInvitesController {
   @AdminAuth(AdminRole.MANAGER)
   @AuditAction('ADMIN_INVITE_CREATED')
   @ApiOperation({ summary: 'Convida um novo AdminUser pra organização do chamador' })
+  @ApiCreatedResponse({ type: InviteResultResponseDto })
   invite(
     @CurrentAdmin() admin: AdminJwtPayload,
     @Body(new ZodValidationPipe(inviteAdminSchema)) body: InviteAdminDto,
@@ -44,6 +48,7 @@ export class AdminInvitesController {
       'Aceita um convite e define a senha — cria o AdminUser. Pra OWNER/MANAGER devolve ' +
       'MFA_SETUP_REQUIRED em vez de sessão (MFA é obrigatório antes de qualquer token válido).',
   })
+  @ApiOkResponse({ type: AcceptInviteResponseDto })
   accept(
     @Param('token') token: string,
     @Body(new ZodValidationPipe(acceptInviteSchema)) body: AcceptInviteDto,
@@ -56,6 +61,7 @@ export class AdminInvitesController {
   @AdminAuth(AdminRole.OWNER)
   @AuditAction('ADMIN_ROLE_CHANGED')
   @ApiOperation({ summary: 'Troca o papel de um AdminUser da organização (somente OWNER)' })
+  @ApiOkResponse({ type: AdminProfileDto })
   changeRole(
     @CurrentAdmin() admin: AdminJwtPayload,
     @Param('id') targetAdminId: string,
@@ -68,6 +74,7 @@ export class AdminInvitesController {
   @AdminAuth(AdminRole.MANAGER)
   @AuditAction('ADMIN_DEACTIVATED')
   @ApiOperation({ summary: 'Desativa um AdminUser de rank inferior ao do chamador' })
+  @ApiOkResponse({ type: AdminProfileDto })
   deactivate(@CurrentAdmin() admin: AdminJwtPayload, @Param('id') targetAdminId: string) {
     return this.adminInvitesService.deactivate(toCallerIdentity(admin), targetAdminId);
   }
