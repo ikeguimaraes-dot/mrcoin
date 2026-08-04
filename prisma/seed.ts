@@ -17,7 +17,12 @@ const PARTNERS = [
     category: 'Alimentação',
     takeRateBps: 500,
     pixKey: 'padaria@boahora.com.br',
-    offers: ['10% de desconto no café da manhã', 'Pão francês grátis a cada 10 compras'],
+    contactEmail: 'contato@boahora.com.br',
+    contactPhone: '11988880001',
+    offers: [
+      { title: '10% de desconto no café da manhã', costInCoins: 150 },
+      { title: 'Pão francês grátis a cada 10 compras', costInCoins: 300 },
+    ],
   },
   {
     name: 'Academia Vigor',
@@ -25,7 +30,12 @@ const PARTNERS = [
     category: 'Saúde e bem-estar',
     takeRateBps: 800,
     pixKey: 'financeiro@vigor.com.br',
-    offers: ['1 mês de mensalidade com desconto', 'Avaliação física gratuita'],
+    contactEmail: 'contato@vigor.com.br',
+    contactPhone: '11988880002',
+    offers: [
+      { title: '1 mês de mensalidade com desconto', costInCoins: 2000 },
+      { title: 'Avaliação física gratuita', costInCoins: 500 },
+    ],
   },
   {
     name: 'Livraria Capítulo',
@@ -33,10 +43,12 @@ const PARTNERS = [
     category: 'Cultura',
     takeRateBps: 600,
     pixKey: 'contato@capitulo.com.br',
+    contactEmail: 'atendimento@capitulo.com.br',
+    contactPhone: '11988880003',
     offers: [
-      '15% de desconto em livros',
-      'Frete grátis na primeira compra',
-      'Clube do livro — 1 mês grátis',
+      { title: '15% de desconto em livros', costInCoins: 400 },
+      { title: 'Frete grátis na primeira compra', costInCoins: 100 },
+      { title: 'Clube do livro — 1 mês grátis', costInCoins: 800 },
     ],
   },
 ];
@@ -116,22 +128,30 @@ async function seedPartnersWithOffers() {
         category: partnerData.category,
         takeRateBps: partnerData.takeRateBps,
         pixKey: partnerData.pixKey,
+        contactEmail: partnerData.contactEmail,
+        contactPhone: partnerData.contactPhone,
       },
     });
 
-    for (const title of partnerData.offers) {
+    for (const offerData of partnerData.offers) {
       const existingOffer = await prisma.offer.findFirst({
-        where: { partnerId: partner.id, title },
+        where: { partnerId: partner.id, title: offerData.title },
       });
 
       if (!existingOffer) {
         await prisma.offer.create({
           data: {
             partnerId: partner.id,
-            title,
-            description: title,
+            title: offerData.title,
+            description: offerData.title,
             category: partnerData.category,
+            costInCoins: offerData.costInCoins,
           },
+        });
+      } else if (existingOffer.costInCoins !== offerData.costInCoins) {
+        await prisma.offer.update({
+          where: { id: existingOffer.id },
+          data: { costInCoins: offerData.costInCoins },
         });
       }
     }

@@ -450,17 +450,19 @@ model Campaign {
 /// Parceiro da rede de resgate — compartilhado por todas as organizações
 /// da plataforma (não pertence a uma Organization específica).
 model Partner {
-  id          String        @id @default(cuid())
-  name        String
-  cnpj        String        @unique
-  category    String
-  takeRateBps Int
-  pixKey      String
-  latitude    Float?
-  longitude   Float?
-  status      PartnerStatus @default(ACTIVE)
-  createdAt   DateTime      @default(now())
-  updatedAt   DateTime      @updatedAt
+  id           String        @id @default(cuid())
+  name         String
+  cnpj         String        @unique
+  category     String
+  takeRateBps  Int
+  pixKey       String
+  contactEmail String?
+  contactPhone String?
+  latitude     Float?
+  longitude    Float?
+  status       PartnerStatus @default(ACTIVE)
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
 
   offers      Offer[]
   redemptions Redemption[]
@@ -468,16 +470,23 @@ model Partner {
 }
 
 /// Oferta de resgate de um Partner, exibida no catálogo do coins-app.
+/// validFrom/validUntil nulos = sem restrição de janela. perUserLimit nulo = sem limite por
+/// pessoa — a aplicação desse limite (checar quantos resgates a pessoa já fez) é do módulo
+/// de resgate, ainda não implementado; aqui só armazena e expõe o valor.
 model Offer {
-  id          String      @id @default(cuid())
-  partnerId   String
-  partner     Partner     @relation(fields: [partnerId], references: [id])
-  title       String
-  description String
-  category    String
-  status      OfferStatus @default(ACTIVE)
-  createdAt   DateTime    @default(now())
-  updatedAt   DateTime    @updatedAt
+  id           String      @id @default(cuid())
+  partnerId    String
+  partner      Partner     @relation(fields: [partnerId], references: [id])
+  title        String
+  description  String
+  category     String
+  costInCoins  Int         @default(0)
+  validFrom    DateTime?
+  validUntil   DateTime?
+  perUserLimit Int?
+  status       OfferStatus @default(ACTIVE)
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
 
   redemptions Redemption[]
 

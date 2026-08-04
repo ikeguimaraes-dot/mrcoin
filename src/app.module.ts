@@ -23,6 +23,8 @@ import { WebhooksModule } from './modules/webhooks/webhooks.module';
 import { DistributionsModule } from './modules/distributions/distributions.module';
 import { DashboardModule } from './modules/dashboard/dashboard.module';
 import { MembersModule } from './modules/members/members.module';
+import { PartnersModule } from './modules/partners/partners.module';
+import { OffersModule } from './modules/offers/offers.module';
 
 @Module({
   imports: [
@@ -63,6 +65,8 @@ import { MembersModule } from './modules/members/members.module';
     DistributionsModule,
     DashboardModule,
     MembersModule,
+    PartnersModule,
+    OffersModule,
   ],
   providers: [
     { provide: APP_FILTER, useClass: AllExceptionsFilter },
