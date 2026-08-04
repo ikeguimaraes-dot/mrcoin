@@ -1,19 +1,18 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { JwtService } from '@nestjs/jwt';
 import { PrismaService } from '../../prisma/prisma.service';
 import { hashCpf } from '../../common/crypto/cpf-crypto.util';
 import { EMAIL_PORT, EmailPort } from '../../common/email/email.port';
-import { OTP_MAX_ATTEMPTS, OTP_TTL_MINUTES, USER_ACCESS_TOKEN_TTL_DAYS } from './users.constants';
+import { OTP_MAX_ATTEMPTS, OTP_TTL_MINUTES } from './users.constants';
 import { generateOtpCode, hashOtpCode } from './otp.util';
 import { RequestLoginInput } from './dto/request-login.schema';
 import { VerifyLoginInput } from './dto/verify-login.schema';
-import { SignupSession } from './signup.service';
 import { AccountNotFoundException } from './exceptions/account-not-found.exception';
 import { NoVerifiedContactException } from './exceptions/no-verified-contact.exception';
 import { OtpNotFoundException } from './exceptions/otp-not-found.exception';
 import { OtpExpiredException } from './exceptions/otp-expired.exception';
 import { OtpTooManyAttemptsException } from './exceptions/otp-too-many-attempts.exception';
 import { OtpInvalidException } from './exceptions/otp-invalid.exception';
+import { RequestMeta, UserTokenPair, UserTokenService } from './user-token.service';
 
 /**
  * Login não cria nem vincula nada — só prova posse do CPF via OTP e devolve sessão.
@@ -26,7 +25,7 @@ import { OtpInvalidException } from './exceptions/otp-invalid.exception';
 export class LoginService {
   constructor(
     private readonly prisma: PrismaService,
-    private readonly jwtService: JwtService,
+    private readonly userTokenService: UserTokenService,
     @Inject(EMAIL_PORT) private readonly emailPort: EmailPort,
   ) {}
 
@@ -61,7 +60,7 @@ export class LoginService {
     return { expiresAt };
   }
 
-  async verifyOtp(input: VerifyLoginInput): Promise<SignupSession> {
+  async verifyOtp(input: VerifyLoginInput, meta: RequestMeta = {}): Promise<UserTokenPair> {
     const cpfHash = hashCpf(input.cpf);
     const pending = await this.prisma.userLoginRequest.findFirst({
       where: { cpfHash, consumedAt: null },
@@ -103,9 +102,6 @@ export class LoginService {
 
     await this.prisma.userLoginRequest.update({ where: { id: pending.id }, data: { consumedAt: new Date() } });
 
-    const expiresIn = USER_ACCESS_TOKEN_TTL_DAYS * 24 * 60 * 60;
-    const accessToken = await this.jwtService.signAsync({ sub: user.id, type: 'user' }, { expiresIn });
-
-    return { accessToken, expiresIn };
+    return this.userTokenService.issueTokenPair(user.id, meta);
   }
 }

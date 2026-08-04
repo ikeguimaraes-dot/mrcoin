@@ -15,6 +15,8 @@ interface RequestOtpResponseBody {
 
 interface VerifyResponseBody {
   accessToken: string;
+  refreshToken: string;
+  tokenType: string;
   expiresIn: number;
 }
 
@@ -116,6 +118,7 @@ afterAll(async () => {
   await prisma.userLoginRequest.deleteMany({
     where: { cpfHash: { in: createdUserIds.length > 0 ? await cpfHashesOf(createdUserIds) : [] } },
   });
+  await prisma.userRefreshToken.deleteMany({ where: { userId: { in: createdUserIds } } });
   await prisma.user.deleteMany({ where: { id: { in: createdUserIds } } });
   await prisma.organization.deleteMany({ where: { id: { in: createdOrgIds } } });
   await prisma.$disconnect();
@@ -140,6 +143,8 @@ describe('Fluxo completo de login', () => {
 
     const verifyBody = verifyRes.body as VerifyResponseBody;
     expect(verifyBody.accessToken).toBeTruthy();
+    expect(verifyBody.refreshToken).toBeTruthy();
+    expect(verifyBody.tokenType).toBe('Bearer');
 
     // Sessão emitida por login serve pro mesmo /wallet que a de signup — mesmo type:user.
     const user = await prisma.user.findUniqueOrThrow({ where: { cpfHash: hashCpf(cpf) } });

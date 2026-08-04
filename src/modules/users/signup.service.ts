@@ -1,27 +1,19 @@
 import { Inject, Injectable, NotFoundException } from '@nestjs/common';
-import { JwtService } from '@nestjs/jwt';
+import { MembershipType, Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { encryptCpf, hashCpf } from '../../common/crypto/cpf-crypto.util';
 import { EMAIL_PORT, EmailPort } from '../../common/email/email.port';
-import {
-  NON_EXISTENT_USER_ID_PLACEHOLDER,
-  OTP_MAX_ATTEMPTS,
-  OTP_TTL_MINUTES,
-  USER_ACCESS_TOKEN_TTL_DAYS,
-} from './users.constants';
+import { NON_EXISTENT_USER_ID_PLACEHOLDER, OTP_MAX_ATTEMPTS, OTP_TTL_MINUTES } from './users.constants';
 import { generateOtpCode, hashOtpCode } from './otp.util';
 import { RequestSignupInput } from './dto/request-signup.schema';
 import { VerifySignupInput } from './dto/verify-signup.schema';
 import { MembershipAlreadyExistsException } from './exceptions/membership-already-exists.exception';
+import { OrganizationRequiredException } from './exceptions/organization-required.exception';
 import { OtpNotFoundException } from './exceptions/otp-not-found.exception';
 import { OtpExpiredException } from './exceptions/otp-expired.exception';
 import { OtpTooManyAttemptsException } from './exceptions/otp-too-many-attempts.exception';
 import { OtpInvalidException } from './exceptions/otp-invalid.exception';
-
-export interface SignupSession {
-  accessToken: string;
-  expiresIn: number;
-}
+import { RequestMeta, UserTokenPair, UserTokenService } from './user-token.service';
 
 /**
  * Nenhum método aqui loga CPF ou código OTP em claro — só cpfHash/ids quando necessário.
@@ -31,35 +23,51 @@ export interface SignupSession {
  * por uma distribuição, sem nenhum contato verificado — ver módulo distributions) não tem
  * e-mail confiável nenhum pra reusar, então o OTP vai pro e-mail que a própria pessoa está
  * informando agora; é isso que prova posse do contato e promove a conta pra ACTIVE.
+ *
+ * organizationId/membershipType são opcionais no corpo: omitidos = claim de um User
+ * PENDING_CLAIM (a pessoa está provando o CPF, não escolhendo organização — a Membership já
+ * existe, criada pela distribuição). Sem PENDING_CLAIM pra esse CPF, os dois campos são
+ * obrigatórios (pessoa nova, ou ACTIVE somando outra organização).
  */
 @Injectable()
 export class SignupService {
   constructor(
     private readonly prisma: PrismaService,
-    private readonly jwtService: JwtService,
+    private readonly userTokenService: UserTokenService,
     @Inject(EMAIL_PORT) private readonly emailPort: EmailPort,
   ) {}
 
   async requestOtp(input: RequestSignupInput): Promise<{ expiresAt: Date }> {
-    const organization = await this.prisma.organization.findUnique({ where: { id: input.organizationId } });
-    if (!organization) {
-      throw new NotFoundException();
-    }
-
     const cpfHash = hashCpf(input.cpf);
     const existingUser = await this.prisma.user.findUnique({ where: { cpfHash } });
+    const isClaim = existingUser?.status === 'PENDING_CLAIM';
 
-    // Sempre faz a query de Membership (mesmo sem existingUser, com um id que nunca bate) —
-    // iguala o número de round-trips ao banco nos dois caminhos, pra não vazar "esse CPF já
-    // existe?" por timing entre os dois cenários que devolvem a mesma resposta HTTP.
-    const existingMembership = await this.prisma.membership.findUnique({
-      where: {
-        userId_organizationId: {
-          userId: existingUser?.id ?? NON_EXISTENT_USER_ID_PLACEHOLDER,
-          organizationId: input.organizationId,
-        },
-      },
-    });
+    if (!isClaim) {
+      // Sem PENDING_CLAIM pra esse CPF: precisa saber a qual organização a pessoa está se
+      // associando (schema já garante os dois vêm juntos quando organizationId é informado).
+      if (!input.organizationId || !input.membershipType) {
+        throw new OrganizationRequiredException();
+      }
+
+      const organization = await this.prisma.organization.findUnique({ where: { id: input.organizationId } });
+      if (!organization) {
+        throw new NotFoundException();
+      }
+    }
+
+    // Sempre faz a query de Membership (mesmo sem existingUser/organizationId, com um id que
+    // nunca bate) — iguala o número de round-trips ao banco nos cenários que devolvem a
+    // mesma resposta HTTP, mesma técnica de sempre.
+    const existingMembership = input.organizationId
+      ? await this.prisma.membership.findUnique({
+          where: {
+            userId_organizationId: {
+              userId: existingUser?.id ?? NON_EXISTENT_USER_ID_PLACEHOLDER,
+              organizationId: input.organizationId,
+            },
+          },
+        })
+      : null;
 
     if (existingUser && existingUser.status === 'ACTIVE' && existingMembership) {
       throw new MembershipAlreadyExistsException();
@@ -74,9 +82,7 @@ export class SignupService {
     const codeHash = hashOtpCode(rawCode);
     const expiresAt = new Date(Date.now() + OTP_TTL_MINUTES * 60 * 1000);
 
-    await this.prisma.userSignupRequest.deleteMany({
-      where: { cpfHash, organizationId: input.organizationId, consumedAt: null },
-    });
+    await this.prisma.userSignupRequest.deleteMany({ where: { cpfHash, consumedAt: null } });
 
     await this.prisma.userSignupRequest.create({
       data: {
@@ -102,10 +108,10 @@ export class SignupService {
     return { expiresAt };
   }
 
-  async verifyOtp(input: VerifySignupInput): Promise<SignupSession> {
+  async verifyOtp(input: VerifySignupInput, meta: RequestMeta = {}): Promise<UserTokenPair> {
     const cpfHash = hashCpf(input.cpf);
     const pending = await this.prisma.userSignupRequest.findFirst({
-      where: { cpfHash, organizationId: input.organizationId, consumedAt: null },
+      where: { cpfHash, consumedAt: null },
       orderBy: { createdAt: 'desc' },
     });
 
@@ -137,45 +143,56 @@ export class SignupService {
 
     const { userId } = await this.prisma.$transaction(async (tx) => {
       const existingUser = await tx.user.findUnique({ where: { cpfHash: pending.cpfHash } });
+      const isClaim = existingUser?.status === 'PENDING_CLAIM';
 
       // PENDING_CLAIM: a conta já existe (criada por uma distribuição), mas sem contato
       // verificado nenhum. Só agora, com o OTP confirmado no e-mail que a pessoa acabou de
       // informar, é seguro promover pra ACTIVE e gravar esse contato — nunca antes disso.
-      const user =
-        existingUser && existingUser.status === 'PENDING_CLAIM'
-          ? await tx.user.update({
-              where: { id: existingUser.id },
-              data: { name: pending.name, phone: pending.phone, email: pending.email, status: 'ACTIVE' },
-            })
-          : await tx.user.upsert({
-              where: { cpfHash: pending.cpfHash },
-              create: {
-                cpfEncrypted: pending.cpfEncrypted,
-                cpfHash: pending.cpfHash,
-                name: pending.name,
-                phone: pending.phone,
-                email: pending.email,
-              },
-              update: {},
-            });
+      const user = isClaim
+        ? await tx.user.update({
+            where: { id: existingUser.id },
+            data: { name: pending.name, phone: pending.phone, email: pending.email, status: 'ACTIVE' },
+          })
+        : await tx.user.upsert({
+            where: { cpfHash: pending.cpfHash },
+            create: {
+              cpfEncrypted: pending.cpfEncrypted,
+              cpfHash: pending.cpfHash,
+              name: pending.name,
+              phone: pending.phone,
+              email: pending.email,
+            },
+            update: {},
+          });
 
-      // Find-or-create: uma distribuição anterior pode já ter criado Membership+Wallet
-      // pra essa organização (é exatamente o caso PENDING_CLAIM); se veio de outra
-      // organização, ainda não existe e é criada aqui, como antes.
-      const membership = await tx.membership.upsert({
-        where: { userId_organizationId: { userId: user.id, organizationId: pending.organizationId } },
-        create: {
-          userId: user.id,
-          organizationId: pending.organizationId,
-          type: pending.membershipType,
-          externalRef: pending.externalRef,
-        },
-        update: {},
-      });
+      if (isClaim) {
+        // Claim: prova o CPF uma vez só, não um vínculo específico — ativa TODAS as
+        // memberships pendentes desse CPF de uma vez (podem ser de mais de uma organização,
+        // se mais de uma empresa distribuiu antes do claim). Memberships já existem, criadas
+        // pelas distribuições; só garante Wallet em cada uma. organizationId do pending (se
+        // por acaso veio preenchido) é ignorado aqui de propósito. Se garantir a Wallet de
+        // QUALQUER membership falhar, a transação inteira reverte — nenhuma é promovida
+        // (nem o User volta a ACTIVE), exatamente como um claim parcial não pode acontecer.
+        const memberships = await tx.membership.findMany({ where: { userId: user.id } });
+        for (const membership of memberships) {
+          await this.ensureWalletForMembership(tx, membership.id);
+        }
+      } else {
+        // Fresh signup ou ACTIVE somando outra organização: organizationId/membershipType
+        // são obrigatórios aqui (garantidos pelo requestOtp) — cria/reaproveita só essa
+        // membership específica, como antes.
+        const membership = await tx.membership.upsert({
+          where: { userId_organizationId: { userId: user.id, organizationId: pending.organizationId as string } },
+          create: {
+            userId: user.id,
+            organizationId: pending.organizationId as string,
+            type: pending.membershipType as MembershipType,
+            externalRef: pending.externalRef,
+          },
+          update: {},
+        });
 
-      const existingWallet = await tx.wallet.findUnique({ where: { membershipId: membership.id } });
-      if (!existingWallet) {
-        await tx.wallet.create({ data: { membershipId: membership.id } });
+        await this.ensureWalletForMembership(tx, membership.id);
       }
 
       await tx.userSignupRequest.update({ where: { id: pending.id }, data: { consumedAt: new Date() } });
@@ -183,12 +200,13 @@ export class SignupService {
       return { userId: user.id };
     });
 
-    const expiresIn = USER_ACCESS_TOKEN_TTL_DAYS * 24 * 60 * 60;
-    const accessToken = await this.jwtService.signAsync(
-      { sub: userId, type: 'user' },
-      { expiresIn },
-    );
+    return this.userTokenService.issueTokenPair(userId, meta);
+  }
 
-    return { accessToken, expiresIn };
+  private async ensureWalletForMembership(tx: Prisma.TransactionClient, membershipId: string): Promise<void> {
+    const existingWallet = await tx.wallet.findUnique({ where: { membershipId } });
+    if (!existingWallet) {
+      await tx.wallet.create({ data: { membershipId } });
+    }
   }
 }

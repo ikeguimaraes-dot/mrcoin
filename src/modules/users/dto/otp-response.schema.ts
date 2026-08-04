@@ -6,8 +6,10 @@ export const requestOtpResponseSchema = z.object({
 });
 export class RequestOtpResponseDto extends createZodDto(requestOtpResponseSchema) {}
 
-export const signupSessionResponseSchema = z.object({
+export const userTokenPairResponseSchema = z.object({
   accessToken: z.string(),
+  refreshToken: z.string(),
+  tokenType: z.literal('Bearer'),
   expiresIn: z.number(),
 });
-export class SignupSessionResponseDto extends createZodDto(signupSessionResponseSchema) {}
+export class UserTokenPairResponseDto extends createZodDto(userTokenPairResponseSchema) {}

@@ -31,3 +31,9 @@ export function decryptCpf(encrypted: string): string {
 export function hashCpf(cpf: string): string {
   return createHmac('sha256', getHashSecret()).update(cpf).digest('hex');
 }
+
+/** Máscara de exibição (ex: "529..-25") — só pra resposta HTTP, nunca logada nem persistida.
+ * Entrada é o CPF já decifrado em memória (nunca cpfEncrypted/cpfHash direto). */
+export function maskCpf(cpf: string): string {
+  return `${cpf.slice(0, 3)}..-${cpf.slice(-2)}`;
+}

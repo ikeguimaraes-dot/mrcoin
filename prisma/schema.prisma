@@ -201,8 +201,30 @@ model User {
   createdAt            DateTime   @default(now())
   updatedAt            DateTime   @updatedAt
 
-  memberships Membership[]
-  devices     Device[]
+  memberships   Membership[]
+  devices       Device[]
+  refreshTokens UserRefreshToken[]
+}
+
+/// Refresh token de sessão do usuário final (coins-app) — mesmo mecanismo do RefreshToken
+/// de AdminUser (rotação por family, hash sha256 em repouso, detecção de reuso), só que pro
+/// model User. Implementação paralela de propósito: RefreshToken/TokenService do admin
+/// dependem de organizationId/role e gravam AuditLog, conceitos que um User não tem.
+model UserRefreshToken {
+  id           String    @id @default(cuid())
+  userId       String
+  user         User      @relation(fields: [userId], references: [id])
+  tokenHash    String    @unique
+  family       String
+  replacedById String?   @unique
+  revokedAt    DateTime?
+  expiresAt    DateTime
+  createdAt    DateTime  @default(now())
+  ip           String?
+  userAgent    String?
+
+  @@index([userId])
+  @@index([family])
 }
 
 /// Registro do celular de um User pra push notification — upsert por (userId, fingerprint),
@@ -246,24 +268,27 @@ model Membership {
 /// User, name/phone/email aqui são ignorados no verify (o OTP vai pro e-mail já cadastrado,
 /// nunca pro e-mail deste registro — ver AdminInvitesService/organizations pro mesmo padrão
 /// de "estado pendente em tabela própria" usado pra convite de admin).
+/// organizationId/membershipType nulos = claim de um User PENDING_CLAIM já existente (prova
+/// só o CPF, sem escolher organização — a(s) Membership(s) já existe(m), criada(s) pela
+/// distribuição). Preenchidos = signup novo numa organização específica, como antes.
 model UserSignupRequest {
-  id             String         @id @default(cuid())
+  id             String          @id @default(cuid())
   cpfEncrypted   String
   cpfHash        String
   name           String
   phone          String?
   email          String
-  organizationId String
-  organization   Organization   @relation(fields: [organizationId], references: [id])
-  membershipType MembershipType
+  organizationId String?
+  organization   Organization?   @relation(fields: [organizationId], references: [id])
+  membershipType MembershipType?
   externalRef    String?
   codeHash       String
-  attempts       Int            @default(0)
+  attempts       Int             @default(0)
   expiresAt      DateTime
   consumedAt     DateTime?
-  createdAt      DateTime       @default(now())
+  createdAt      DateTime        @default(now())
 
-  @@index([cpfHash, organizationId])
+  @@index([cpfHash])
 }
 
 /// Pedido de OTP pra LOGIN (usuário que já existe) — mais enxuto que UserSignupRequest
