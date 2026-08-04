@@ -32,7 +32,7 @@ export class WalletsService {
   ) {}
 
   async getWallet(userId: string, organizationId: string): Promise<WalletSummary> {
-    const walletId = await this.resolveWalletId(userId, organizationId);
+    const { walletId } = await this.resolveWalletId(userId, organizationId);
     const [balance, expiring] = await Promise.all([
       this.ledgerService.getBalance(walletId),
       this.getExpiringBatches(walletId),
@@ -46,11 +46,13 @@ export class WalletsService {
     organizationId: string,
     options?: { cursor?: string; limit?: number },
   ): Promise<{ items: SafeLedgerEntry[]; nextCursor: string | null }> {
-    const walletId = await this.resolveWalletId(userId, organizationId);
+    const { walletId } = await this.resolveWalletId(userId, organizationId);
     return this.ledgerService.getEntries(walletId, options);
   }
 
-  private async resolveWalletId(userId: string, organizationId: string): Promise<string> {
+  /** Também usado por RedemptionsService — resolve a wallet certa (organização/membership)
+   * pra debitar num resgate, mesma checagem de ACTIVE que já vale pro extrato/saldo. */
+  async resolveWalletId(userId: string, organizationId: string): Promise<{ membershipId: string; walletId: string }> {
     const membership = await this.prisma.membership.findUnique({
       where: { userId_organizationId: { userId, organizationId } },
       include: { wallet: true },
@@ -60,7 +62,7 @@ export class WalletsService {
       throw new MembershipNotFoundException();
     }
 
-    return membership.wallet.id;
+    return { membershipId: membership.id, walletId: membership.wallet.id };
   }
 
   private async getExpiringBatches(walletId: string): Promise<ExpiringBatch[]> {

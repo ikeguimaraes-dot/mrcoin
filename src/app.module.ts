@@ -25,6 +25,7 @@ import { DashboardModule } from './modules/dashboard/dashboard.module';
 import { MembersModule } from './modules/members/members.module';
 import { PartnersModule } from './modules/partners/partners.module';
 import { OffersModule } from './modules/offers/offers.module';
+import { RedemptionsModule } from './modules/redemptions/redemptions.module';
 
 @Module({
   imports: [
@@ -67,6 +68,7 @@ import { OffersModule } from './modules/offers/offers.module';
     MembersModule,
     PartnersModule,
     OffersModule,
+    RedemptionsModule,
   ],
   providers: [
     { provide: APP_FILTER, useClass: AllExceptionsFilter },

@@ -9,5 +9,6 @@ import { MembershipsService } from './memberships.service';
   imports: [LedgerModule],
   controllers: [WalletsController, MembershipsController],
   providers: [WalletsService, MembershipsService],
+  exports: [WalletsService],
 })
 export class WalletsModule {}

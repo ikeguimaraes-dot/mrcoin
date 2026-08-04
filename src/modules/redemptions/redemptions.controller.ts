@@ -1,0 +1,45 @@
+import { BadRequestException, Body, Controller, Get, Headers, Param, Post, UseGuards } from '@nestjs/common';
+import { ApiCreatedResponse, ApiHeader, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { UserJwtGuard } from '../../common/guards/user-jwt.guard';
+import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe';
+import { UserJwtPayload } from '../../common/guards/jwt-payload.types';
+import { RedemptionsService } from './redemptions.service';
+import { CreateRedemptionDto, createRedemptionSchema } from './dto/create-redemption.schema';
+import { RedemptionResponseDto } from './dto/redemption-response.schema';
+
+function requireIdempotencyKey(idempotencyKey: string | undefined): string {
+  if (!idempotencyKey?.trim()) {
+    throw new BadRequestException({
+      code: 'VALIDATION_ERROR',
+      message: 'Header Idempotency-Key é obrigatório.',
+    });
+  }
+  return idempotencyKey;
+}
+
+@ApiTags('redemptions')
+@Controller('redemptions')
+@UseGuards(UserJwtGuard)
+export class RedemptionsController {
+  constructor(private readonly redemptionsService: RedemptionsService) {}
+
+  @Post()
+  @ApiHeader({ name: 'Idempotency-Key', required: true })
+  @ApiOperation({ summary: 'Cria um resgate PENDING (código + QR, TTL 5min) — nada é debitado ainda' })
+  @ApiCreatedResponse({ type: RedemptionResponseDto })
+  create(
+    @CurrentUser() user: UserJwtPayload,
+    @Headers('idempotency-key') idempotencyKey: string | undefined,
+    @Body(new ZodValidationPipe(createRedemptionSchema)) body: CreateRedemptionDto,
+  ) {
+    return this.redemptionsService.create(user.sub, body, requireIdempotencyKey(idempotencyKey));
+  }
+
+  @Get(':id')
+  @ApiOperation({ summary: 'Consulta um resgate — usado pelo app pra polling aguardando confirmação' })
+  @ApiOkResponse({ type: RedemptionResponseDto })
+  getById(@CurrentUser() user: UserJwtPayload, @Param('id') id: string) {
+    return this.redemptionsService.getById(user.sub, id);
+  }
+}
