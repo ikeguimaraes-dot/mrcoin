@@ -15,6 +15,8 @@ import { RedemptionExpiredException } from './exceptions/redemption-expired.exce
 import { RedemptionLimitReachedException } from './exceptions/redemption-limit-reached.exception';
 import { IdempotencyConflictException } from './exceptions/idempotency-conflict.exception';
 import { SAFE_REDEMPTION_SELECT, SafeRedemption } from './safe-redemption.util';
+import { PartnerRedemptionConfirmResponseDto } from './dto/partner-redemption-confirm-response.schema';
+import { extractFirstName } from './partner-redemption.util';
 
 const UNIQUE_CONSTRAINT_ERROR_CODE = 'P2002';
 
@@ -188,6 +190,36 @@ export class RedemptionsService {
     });
 
     return this.prisma.redemption.findUniqueOrThrow({ where: { id: redemption.id }, select: SAFE_REDEMPTION_SELECT });
+  }
+
+  /**
+   * Wrapper de confirm() só pra moldar a resposta que o portal do parceiro recebe — a
+   * lógica de débito em si (as 3 garantias inegociáveis) fica inteiramente em confirm(),
+   * intocada. Busca offerTitle e o primeiro nome do cliente à parte porque SAFE_REDEMPTION_SELECT
+   * nunca inclui membershipId (não faz sentido sair em resposta HTTP), então não dá pra
+   * chegar no User a partir do retorno de confirm().
+   */
+  async confirmForPartner(partnerId: string, input: ConfirmRedemptionInput): Promise<PartnerRedemptionConfirmResponseDto> {
+    const redemption = await this.confirm(partnerId, input);
+
+    const [offer, redemptionWithCustomer] = await Promise.all([
+      redemption.offerId
+        ? this.prisma.offer.findUnique({ where: { id: redemption.offerId }, select: { title: true } })
+        : Promise.resolve(null),
+      this.prisma.redemption.findUniqueOrThrow({
+        where: { id: redemption.id },
+        select: { membership: { select: { user: { select: { name: true } } } } },
+      }),
+    ]);
+
+    return {
+      id: redemption.id,
+      amount: redemption.amount,
+      status: redemption.status,
+      confirmedAt: redemption.confirmedAt ? redemption.confirmedAt.toISOString() : null,
+      offerTitle: offer?.title ?? null,
+      customerFirstName: extractFirstName(redemptionWithCustomer.membership.user.name),
+    };
   }
 
   private assertIdempotentReplayMatches(

@@ -9,8 +9,7 @@ const INVALID_TOKEN_RESPONSE = { code: 'UNAUTHORIZED', message: 'Token inválido
 /**
  * Só verifica o JWT e anexa `request.partner` — sem organizationId, porque Partner é
  * platform-wide (compartilhado entre todas as organizações, sem pertencer a nenhuma).
- * Ainda não há endpoint de login que emita esse token — infraestrutura pronta pra quando
- * o módulo partners/ existir.
+ * Token emitido por PartnerTokenService, via POST /partners/login.
  */
 @Injectable()
 export class PartnerJwtGuard implements CanActivate {

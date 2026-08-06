@@ -7,11 +7,9 @@ import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe';
 import { PartnerJwtPayload } from '../../common/guards/jwt-payload.types';
 import { RedemptionsService } from './redemptions.service';
 import { ConfirmRedemptionDto, confirmRedemptionSchema } from './dto/confirm-redemption.schema';
-import { RedemptionResponseDto } from './dto/redemption-response.schema';
+import { PartnerRedemptionConfirmResponseDto } from './dto/partner-redemption-confirm-response.schema';
 
-/** Endpoint que o portal do parceiro vai usar (ainda não existe login de parceiro — testado
- * por ora com um JWT type:'partner' assinado direto, mesma técnica dos testes e2e de
- * admin/usuário; ver plano da Sessão 17). */
+/** Endpoint que o portal do parceiro (coins-partner) usa pra confirmar um resgate no balcão. */
 @ApiTags('redemptions')
 @Controller('redemptions')
 @UseGuards(PartnerJwtGuard, RedemptionConfirmRateLimitGuard)
@@ -20,11 +18,11 @@ export class PartnerRedemptionsController {
 
   @Post('confirm')
   @ApiOperation({ summary: 'Confirma um resgate (code OU qrPayload) — só aqui o débito acontece' })
-  @ApiCreatedResponse({ type: RedemptionResponseDto })
+  @ApiCreatedResponse({ type: PartnerRedemptionConfirmResponseDto })
   confirm(
     @CurrentPartner() partner: PartnerJwtPayload,
     @Body(new ZodValidationPipe(confirmRedemptionSchema)) body: ConfirmRedemptionDto,
   ) {
-    return this.redemptionsService.confirm(partner.sub, body);
+    return this.redemptionsService.confirmForPartner(partner.sub, body);
   }
 }

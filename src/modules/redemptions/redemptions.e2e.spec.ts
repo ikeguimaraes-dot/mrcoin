@@ -8,6 +8,7 @@ import request from 'supertest';
 import { AppModule } from '../../app.module';
 import { PrismaService } from '../../prisma/prisma.service';
 import { encryptCpf, hashCpf } from '../../common/crypto/cpf-crypto.util';
+import { PARTNER_REDEMPTION_CONFIRM_ALLOWED_FIELDS } from './dto/partner-redemption-confirm-response.schema';
 
 interface RedemptionBody {
   id: string;
@@ -23,6 +24,15 @@ interface RedemptionBody {
 
 interface ErrorBody {
   code: string;
+}
+
+interface PartnerConfirmBody {
+  id: string;
+  amount: number;
+  status: string;
+  confirmedAt: string | null;
+  offerTitle: string | null;
+  customerFirstName: string;
 }
 
 const prisma = new PrismaService();
@@ -603,6 +613,55 @@ describe('Validações e autenticação', () => {
     expect(created.body).not.toHaveProperty('membershipId');
     expect(created.body).not.toHaveProperty('walletId');
     expect(created.body).not.toHaveProperty('ledgerEntryId');
+  });
+
+  it('POST /redemptions/confirm — resposta pro parceiro nunca expõe cpf/e-mail/telefone/sobrenome do cliente', async () => {
+    const org = await createOrg();
+    const partner = await createPartner();
+    const offer = await createOffer(partner.id, { costInCoins: 100 });
+    const user = await createUserWithWallet(org.id, 500);
+
+    const created = await request(server)
+      .post('/redemptions')
+      .set('Authorization', `Bearer ${user.token}`)
+      .set('Idempotency-Key', idempotencyKey())
+      .send({ offerId: offer.id, organizationId: org.id })
+      .expect(201);
+
+    const confirmRes = await request(server)
+      .post('/redemptions/confirm')
+      .set('Authorization', `Bearer ${partner.token}`)
+      .send({ code: (created.body as RedemptionBody).code })
+      .expect(201);
+    const confirmed = confirmRes.body as PartnerConfirmBody;
+
+    // O nome de fixture é "Redemption Test User <uuid>" — só "Redemption" pode aparecer.
+    expect(confirmed.customerFirstName).toBe('Redemption');
+    expect(confirmed.offerTitle).toContain('Redemption Test Offer');
+    expect(confirmed.amount).toBe(100);
+    expect(confirmed.status).toBe('CONFIRMED');
+
+    // Trava por lista: qualquer campo novo no schema de resposta precisa passar por essa
+    // lista (partner-redemption-confirm-response.schema.ts) antes de sair em produção.
+    expect(Object.keys(confirmRes.body as object).sort()).toEqual(PARTNER_REDEMPTION_CONFIRM_ALLOWED_FIELDS);
+
+    for (const forbiddenField of [
+      'cpf',
+      'cpfHash',
+      'cpfEncrypted',
+      'email',
+      'phone',
+      'customerLastName',
+      'customerName',
+      'customerEmail',
+      'customerPhone',
+      'membershipId',
+      'walletId',
+      'code',
+      'qrPayload',
+    ]) {
+      expect(confirmRes.body).not.toHaveProperty(forbiddenField);
+    }
   });
 
   it('GET /redemptions/:id de outro usuário retorna 404', async () => {

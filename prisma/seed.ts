@@ -8,6 +8,12 @@ const prisma = new PrismaClient();
 /** Só para dev local — troque numa conta real antes de qualquer coisa que não seja seed. */
 const SEED_ADMIN_PASSWORD = 'DevPassword123!';
 
+/** Login do portal do parceiro (coins-partner) — só a Livraria Capítulo tem credencial
+ * provisionada por enquanto (é o parceiro usado nos testes manuais do fluxo de confirmar
+ * resgate). Os outros dois parceiros ficam com passwordHash nulo — sem acesso ao portal
+ * até serem provisionados também. */
+const SEED_PARTNER_PASSWORD = 'DevPartnerPassword123!';
+
 const USERS_COUNT = 20;
 
 const PARTNERS = [
@@ -19,6 +25,7 @@ const PARTNERS = [
     pixKey: 'padaria@boahora.com.br',
     contactEmail: 'contato@boahora.com.br',
     contactPhone: '11988880001',
+    password: null,
     offers: [
       { title: '10% de desconto no café da manhã', costInCoins: 150 },
       { title: 'Pão francês grátis a cada 10 compras', costInCoins: 300 },
@@ -32,6 +39,7 @@ const PARTNERS = [
     pixKey: 'financeiro@vigor.com.br',
     contactEmail: 'contato@vigor.com.br',
     contactPhone: '11988880002',
+    password: null,
     offers: [
       { title: '1 mês de mensalidade com desconto', costInCoins: 2000 },
       { title: 'Avaliação física gratuita', costInCoins: 500 },
@@ -45,6 +53,7 @@ const PARTNERS = [
     pixKey: 'contato@capitulo.com.br',
     contactEmail: 'atendimento@capitulo.com.br',
     contactPhone: '11988880003',
+    password: SEED_PARTNER_PASSWORD,
     offers: [
       { title: '15% de desconto em livros', costInCoins: 400 },
       { title: 'Frete grátis na primeira compra', costInCoins: 100 },
@@ -119,18 +128,25 @@ async function seedUsersWithWallets(organizationId: string) {
 
 async function seedPartnersWithOffers() {
   for (const partnerData of PARTNERS) {
+    const passwordHash = partnerData.password ? await hashPassword(partnerData.password) : null;
+
+    // update preenchido de propósito (não `{}`) — senão um parceiro criado antes desta
+    // sessão nunca ganha contactEmail/passwordHash quando o seed roda de novo, já que
+    // upsert só aplica `create` na primeira vez.
+    const partnerFields = {
+      name: partnerData.name,
+      category: partnerData.category,
+      takeRateBps: partnerData.takeRateBps,
+      pixKey: partnerData.pixKey,
+      contactEmail: partnerData.contactEmail,
+      contactPhone: partnerData.contactPhone,
+      passwordHash,
+    };
+
     const partner = await prisma.partner.upsert({
       where: { cnpj: partnerData.cnpj },
-      update: {},
-      create: {
-        name: partnerData.name,
-        cnpj: partnerData.cnpj,
-        category: partnerData.category,
-        takeRateBps: partnerData.takeRateBps,
-        pixKey: partnerData.pixKey,
-        contactEmail: partnerData.contactEmail,
-        contactPhone: partnerData.contactPhone,
-      },
+      update: partnerFields,
+      create: { cnpj: partnerData.cnpj, ...partnerFields },
     });
 
     for (const offerData of partnerData.offers) {
@@ -169,6 +185,7 @@ async function main() {
     users: USERS_COUNT,
     partners: PARTNERS.length,
     adminLogin: { email: 'owner@coins-piloto.com.br', password: SEED_ADMIN_PASSWORD },
+    partnerLogin: { email: 'atendimento@capitulo.com.br', password: SEED_PARTNER_PASSWORD },
   });
 }
 

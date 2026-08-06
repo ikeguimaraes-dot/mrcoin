@@ -460,13 +460,37 @@ model Partner {
   contactPhone String?
   latitude     Float?
   longitude    Float?
+  /// Login do portal do parceiro (coins-partner). Nulo = parceiro ainda sem acesso
+  /// provisionado — login por e-mail (contactEmail) falha nesse caso, não só por senha errada.
+  passwordHash String?
   status       PartnerStatus @default(ACTIVE)
   createdAt    DateTime      @default(now())
   updatedAt    DateTime      @updatedAt
 
-  offers      Offer[]
-  redemptions Redemption[]
-  settlements Settlement[]
+  offers        Offer[]
+  redemptions   Redemption[]
+  settlements   Settlement[]
+  refreshTokens PartnerRefreshToken[]
+}
+
+/// Refresh token de sessão do parceiro (coins-partner) — mesmo mecanismo do UserRefreshToken
+/// (rotação por family, hash sha256 em repouso, detecção de reuso), implementação paralela
+/// pelo mesmo motivo: Partner não tem organizationId nem gera AuditLog.
+model PartnerRefreshToken {
+  id           String    @id @default(cuid())
+  partnerId    String
+  partner      Partner   @relation(fields: [partnerId], references: [id])
+  tokenHash    String    @unique
+  family       String
+  replacedById String?   @unique
+  revokedAt    DateTime?
+  expiresAt    DateTime
+  createdAt    DateTime  @default(now())
+  ip           String?
+  userAgent    String?
+
+  @@index([partnerId])
+  @@index([family])
 }
 
 /// Oferta de resgate de um Partner, exibida no catálogo do coins-app.

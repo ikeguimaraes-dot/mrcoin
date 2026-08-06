@@ -6,8 +6,10 @@ import { PartnerNotFoundException } from './exceptions/partner-not-found.excepti
 import {
   SAFE_PARTNER_ADMIN_SELECT,
   SAFE_PARTNER_CATALOG_SELECT,
+  SAFE_PARTNER_SESSION_SELECT,
   SafePartnerAdmin,
   SafePartnerCatalog,
+  SafePartnerSession,
 } from './safe-partner.util';
 
 /** Partner é global (compartilhado por todas as organizações da plataforma) — nenhuma
@@ -76,5 +78,12 @@ export class PartnersService {
     }
 
     return partner;
+  }
+
+  async getMe(id: string): Promise<SafePartnerSession> {
+    return this.prisma.partner.findUniqueOrThrow({
+      where: { id },
+      select: SAFE_PARTNER_SESSION_SELECT,
+    });
   }
 }
