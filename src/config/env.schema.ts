@@ -8,8 +8,8 @@ export const envSchema = z
     DIRECT_URL: z.string().url(),
     CPF_ENCRYPTION_KEY: z.string().regex(/^[0-9a-f]{64}$/i, 'deve ter 32 bytes em hex (64 caracteres)'),
     CPF_HASH_SECRET: z.string().min(32),
-    // TLS (rediss://) é exigido fora de teste (Upstash em dev/produção). Em NODE_ENV=test,
-    // redis:// também é aceito — Redis local pra suíte, sem depender de cota de plano gratuito.
+    // TLS (rediss://) é exigido só em produção (Upstash). Em development/test, redis://
+    // também é aceito — Redis local, sem depender de cota do plano gratuito do Upstash.
     REDIS_URL: z
       .string()
       .url()
@@ -24,13 +24,20 @@ export const envSchema = z
     LOCAL_STORAGE_DIR: z.string().min(1).default('./uploads'),
   })
   .superRefine((data, ctx) => {
-    if (data.NODE_ENV !== 'test' && !data.REDIS_URL.startsWith('rediss://')) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['REDIS_URL'],
-        message: 'Upstash exige TLS — use o esquema rediss:// (redis:// só é aceito com NODE_ENV=test)',
-      });
-    }
+    if (data.NODE_ENV !== 'production') return;
+    if (data.REDIS_URL.startsWith('rediss://')) return;
+
+    // Rede privada do Railway (*.railway.internal) já é criptografada por WireGuard entre
+    // serviços — TLS na camada do protocolo Redis seria redundante. Fora dela, produção
+    // exige rediss:// (TLS) porque o tráfego sairia pela internet pública sem proteção.
+    const isRailwayPrivateNetwork = new URL(data.REDIS_URL).hostname.endsWith('.railway.internal');
+    if (isRailwayPrivateNetwork) return;
+
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['REDIS_URL'],
+      message: 'REDIS_URL precisa usar rediss:// (TLS) em produção, exceto na rede privada do Railway (*.railway.internal)',
+    });
   });
 
 export type Env = z.infer<typeof envSchema>;
