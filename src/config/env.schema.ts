@@ -30,18 +30,30 @@ export const envSchema = z
     ASAAS_BASE_URL: z.string().url().default('https://api-sandbox.asaas.com/v3'),
     ASAAS_WEBHOOK_SECRET: z.string().min(16),
     LOCAL_STORAGE_DIR: z.string().min(1).default('./uploads'),
+    // Só obrigatórias em produção (ver superRefine) — dev/test usam ConsoleEmailAdapter,
+    // que não manda e-mail de verdade e não precisa de credencial nenhuma.
+    RESEND_API_KEY: z.string().min(1).optional(),
+    RESEND_FROM_EMAIL: z.string().email().optional(),
   })
   .superRefine((data, ctx) => {
     if (data.NODE_ENV !== 'production') return;
-    if (data.REDIS_URL.startsWith('rediss://')) return;
-    if (data.REDIS_ALLOW_PLAINTEXT) return;
 
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ['REDIS_URL'],
-      message:
-        'REDIS_URL precisa usar rediss:// (TLS) em produção, a menos que REDIS_ALLOW_PLAINTEXT=true esteja setado (rede privada do provedor, já criptografada na camada de rede)',
-    });
+    if (!data.REDIS_URL.startsWith('rediss://') && !data.REDIS_ALLOW_PLAINTEXT) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['REDIS_URL'],
+        message:
+          'REDIS_URL precisa usar rediss:// (TLS) em produção, a menos que REDIS_ALLOW_PLAINTEXT=true esteja setado (rede privada do provedor, já criptografada na camada de rede)',
+      });
+    }
+
+    if (!data.RESEND_API_KEY) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['RESEND_API_KEY'], message: 'obrigatório em produção' });
+    }
+
+    if (!data.RESEND_FROM_EMAIL) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['RESEND_FROM_EMAIL'], message: 'obrigatório em produção' });
+    }
   });
 
 export type Env = z.infer<typeof envSchema>;
