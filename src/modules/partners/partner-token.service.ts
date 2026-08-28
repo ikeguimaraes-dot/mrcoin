@@ -132,6 +132,17 @@ export class PartnerTokenService {
     return { rawToken, id: created.id };
   }
 
+  /** Revoga TODOS os refresh tokens ativos do parceiro — usado no reset de senha via
+   * platform admin, pra invalidar sessões existentes junto com a credencial antiga.
+   * Access tokens JWT em circulação continuam válidos até expirar (15 min); não há
+   * blocklist de access token neste sistema, pra nenhum actor. */
+  async revokeAllForPartner(partnerId: string): Promise<void> {
+    await this.prisma.partnerRefreshToken.updateMany({
+      where: { partnerId, revokedAt: null },
+      data: { revokedAt: new Date() },
+    });
+  }
+
   private async revokeFamily(family: string): Promise<void> {
     await this.prisma.partnerRefreshToken.updateMany({
       where: { family, revokedAt: null },

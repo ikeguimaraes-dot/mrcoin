@@ -603,6 +603,7 @@ model Redemption {
   updatedAt      DateTime         @updatedAt
 
   @@index([status, expiresAt])
+  @@index([partnerId, status])
 }
 
 /// Fechamento periódico (semanal) dos resgates confirmados de um parceiro,

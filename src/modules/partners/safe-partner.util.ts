@@ -45,3 +45,24 @@ export const SAFE_PARTNER_ADMIN_SELECT = {
 } satisfies Prisma.PartnerSelect;
 
 export type SafePartnerAdmin = Prisma.PartnerGetPayload<{ select: typeof SAFE_PARTNER_ADMIN_SELECT }>;
+
+/** PlatformAdmin é o actor que provisiona a relação comercial com o parceiro (fornece
+ * pixKey/takeRateBps no create) — por isso, diferente dos outros três shapes, este inclui
+ * os termos comerciais. Nunca inclui passwordHash. */
+export const SAFE_PARTNER_PLATFORM_SELECT = {
+  id: true,
+  name: true,
+  cnpj: true,
+  category: true,
+  takeRateBps: true,
+  pixKey: true,
+  status: true,
+  contactEmail: true,
+  contactPhone: true,
+  latitude: true,
+  longitude: true,
+  createdAt: true,
+  updatedAt: true,
+} satisfies Prisma.PartnerSelect;
+
+export type SafePartnerPlatform = Prisma.PartnerGetPayload<{ select: typeof SAFE_PARTNER_PLATFORM_SELECT }>;
