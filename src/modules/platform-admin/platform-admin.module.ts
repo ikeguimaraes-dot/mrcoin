@@ -41,6 +41,6 @@ import { PlatformAdminMfaRateLimitGuard } from './guards/platform-admin-mfa-rate
     PlatformAdminLoginRateLimitGuard,
     PlatformAdminMfaRateLimitGuard,
   ],
-  exports: [PLATFORM_JWT_SERVICE, PlatformAdminJwtGuard],
+  exports: [PLATFORM_JWT_SERVICE, PlatformAdminJwtGuard, PlatformAdminAuditService],
 })
 export class PlatformAdminModule {}

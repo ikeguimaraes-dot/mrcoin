@@ -15,6 +15,7 @@ import { LedgerModule } from './modules/ledger/ledger.module';
 import { JobsModule } from './modules/jobs/jobs.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { PlatformAdminModule } from './modules/platform-admin/platform-admin.module';
+import { PlatformOrganizationsModule } from './modules/platform-admin/organizations/platform-organizations.module';
 import { OrganizationsModule } from './modules/organizations/organizations.module';
 import { UsersModule } from './modules/users/users.module';
 import { WalletsModule } from './modules/wallets/wallets.module';
@@ -59,6 +60,7 @@ import { RedemptionsModule } from './modules/redemptions/redemptions.module';
     JobsModule,
     AuthModule,
     PlatformAdminModule,
+    PlatformOrganizationsModule,
     OrganizationsModule,
     UsersModule,
     WalletsModule,

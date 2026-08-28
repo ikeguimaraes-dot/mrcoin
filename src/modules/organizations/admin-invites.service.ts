@@ -1,4 +1,3 @@
-import { createHash, randomBytes } from 'node:crypto';
 import { Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AdminRole, AdminUser } from '@prisma/client';
@@ -12,6 +11,7 @@ import { RequestMeta, TokenPair, TokenService } from '../auth/token.service';
 import { MFA_MANDATORY_ROLES } from '../auth/auth.constants';
 import { AdminProfile } from '../auth/admin-directory.service';
 import { ADMIN_INVITE_TTL_DAYS } from './organizations.constants';
+import { generateInviteToken, hashInviteToken } from './invite-token.util';
 import { InviteAdminInput } from './dto/invite-admin.schema';
 import { AcceptInviteInput } from './dto/accept-invite.schema';
 import { ChangeRoleInput } from './dto/change-role.schema';
@@ -76,9 +76,7 @@ export class AdminInvitesService {
       throw new EmailAlreadyInUseException();
     }
 
-    const rawToken = randomBytes(32).toString('hex');
-    const tokenHash = this.hashToken(rawToken);
-    const expiresAt = new Date(Date.now() + ADMIN_INVITE_TTL_DAYS * 24 * 60 * 60 * 1000);
+    const { rawToken, tokenHash, expiresAt } = generateInviteToken();
 
     const invite = await this.prisma.adminInvite.create({
       data: {
@@ -103,7 +101,7 @@ export class AdminInvitesService {
   }
 
   async accept(rawToken: string, input: AcceptInviteInput, meta: RequestMeta = {}): Promise<AcceptInviteResult> {
-    const tokenHash = this.hashToken(rawToken);
+    const tokenHash = hashInviteToken(rawToken);
     const invite = await this.prisma.adminInvite.findUnique({ where: { tokenHash } });
 
     if (!invite) {
@@ -200,9 +198,5 @@ export class AdminInvitesService {
     }
 
     return target;
-  }
-
-  private hashToken(rawToken: string): string {
-    return createHash('sha256').update(rawToken).digest('hex');
   }
 }
