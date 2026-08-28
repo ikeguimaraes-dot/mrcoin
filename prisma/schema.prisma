@@ -186,6 +186,65 @@ model AdminUser {
   @@index([organizationId])
 }
 
+enum PlatformAdminStatus {
+  ACTIVE
+  INACTIVE
+}
+
+/// Dono da plataforma (mrcoin) — nível de acesso acima de AdminUser e Partner, sem
+/// organizationId (platform-wide, como Partner). MFA é obrigatório sem exceção (ver
+/// PlatformAdminAuthService), diferente de AdminUser onde só OWNER/MANAGER são forçados.
+model PlatformAdmin {
+  id           String              @id @default(cuid())
+  name         String
+  email        String              @unique
+  passwordHash String
+  mfaEnabled   Boolean             @default(false)
+  mfaSecret    String?
+  status       PlatformAdminStatus @default(ACTIVE)
+  lastLoginAt  DateTime?
+  createdAt    DateTime            @default(now())
+  updatedAt    DateTime            @updatedAt
+
+  refreshTokens PlatformAdminRefreshToken[]
+  auditLogs     PlatformAdminAuditLog[]
+}
+
+/// Mesma mecânica de RefreshToken/PartnerRefreshToken: rotação por family, hash sha256,
+/// detecção de reuso derruba a family inteira.
+model PlatformAdminRefreshToken {
+  id              String        @id @default(cuid())
+  platformAdminId String
+  platformAdmin   PlatformAdmin @relation(fields: [platformAdminId], references: [id])
+  tokenHash       String        @unique
+  family          String
+  replacedById    String?       @unique
+  revokedAt       DateTime?
+  expiresAt       DateTime
+  createdAt       DateTime      @default(now())
+  ip              String?
+  userAgent       String?
+
+  @@index([platformAdminId])
+  @@index([family])
+}
+
+/// Trilha de auditoria própria do PlatformAdmin — a tabela AuditLog exige organizationId
+/// (NOT NULL) e o enum AuditActorType só tem ADMIN/SYSTEM, então não serve para um ator
+/// platform-wide (mesmo motivo pelo qual Partner não grava em AuditLog).
+/// platformAdminId nulo registra tentativa de login com e-mail desconhecido, sem FK.
+model PlatformAdminAuditLog {
+  id              String         @id @default(cuid())
+  platformAdminId String?
+  platformAdmin   PlatformAdmin? @relation(fields: [platformAdminId], references: [id])
+  action          String
+  payload         Json
+  ip              String
+  createdAt       DateTime       @default(now())
+
+  @@index([platformAdminId, createdAt])
+}
+
 /// Usuário final (cliente ou funcionário), identificado por CPF. Não
 /// pertence diretamente a uma organização — o vínculo é via Membership,
 /// já que a mesma pessoa pode participar de várias empresas.

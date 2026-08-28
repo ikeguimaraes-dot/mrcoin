@@ -23,6 +23,10 @@ export const envSchema = z
       .default('false')
       .transform((value) => value === 'true'),
     JWT_ACCESS_SECRET: z.string().min(32),
+    // Secret dedicado, separado do JWT_ACCESS_SECRET usado por AdminUser/Partner/User —
+    // PlatformAdmin é o nível mais privilegiado, então tem sua própria instância de
+    // JwtService (ver PlatformAdminModule) pra isolamento real, não só a claim `type`.
+    PLATFORM_ADMIN_JWT_SECRET: z.string().min(32),
     MFA_ENCRYPTION_KEY: z.string().regex(/^[0-9a-f]{64}$/i, 'deve ter 32 bytes em hex (64 caracteres)'),
     ADMIN_PANEL_URL: z.string().url().default('http://localhost:3001'),
     ASAAS_ENV: z.enum(['sandbox', 'production']).default('sandbox'),
