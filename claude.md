@@ -89,13 +89,14 @@ Testes de integração nos fluxos críticos: compra de lote via webhook do PSP, 
 
 ```bash
 pnpm install
-# .env aponta para um branch de desenvolvimento no Neon e para o Upstash
+# .env aponta para um branch de desenvolvimento no Neon; Redis usa a instância local do Homebrew
+brew services start redis  # se ainda não estiver rodando
 pnpm prisma migrate dev
 pnpm prisma db seed        # 1 org, 20 usuários, 3 parceiros
 pnpm start:dev
 ```
 
-Sem Docker. Banco e Redis são gerenciados na nuvem em todos os ambientes.
+Sem Docker. Banco é gerenciado na nuvem (Neon) em todos os ambientes. Redis roda local via Homebrew (`redis://localhost:6379`) em `development` e `test` — o plano free do Upstash permite só um database e é reservado para produção. Em `production`, Redis continua no Upstash com TLS obrigatório (`rediss://`); `env.schema.ts` exige o esquema `rediss://` apenas quando `NODE_ENV=production`.
 
 ## Jobs agendados
 
