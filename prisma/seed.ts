@@ -27,8 +27,16 @@ const PARTNERS = [
     contactPhone: '11988880001',
     password: null,
     offers: [
-      { title: '10% de desconto no café da manhã', costInCoins: 150 },
-      { title: 'Pão francês grátis a cada 10 compras', costInCoins: 300 },
+      {
+        title: '10% de desconto no café da manhã',
+        costInCoins: 150,
+        imageUrl: 'https://picsum.photos/seed/padaria-cafe/600/400',
+      },
+      {
+        title: 'Pão francês grátis a cada 10 compras',
+        costInCoins: 300,
+        imageUrl: 'https://picsum.photos/seed/padaria-pao/600/400',
+      },
     ],
   },
   {
@@ -41,8 +49,16 @@ const PARTNERS = [
     contactPhone: '11988880002',
     password: null,
     offers: [
-      { title: '1 mês de mensalidade com desconto', costInCoins: 2000 },
-      { title: 'Avaliação física gratuita', costInCoins: 500 },
+      {
+        title: '1 mês de mensalidade com desconto',
+        costInCoins: 2000,
+        imageUrl: 'https://picsum.photos/seed/academia-mensalidade/600/400',
+      },
+      {
+        title: 'Avaliação física gratuita',
+        costInCoins: 500,
+        imageUrl: 'https://picsum.photos/seed/academia-avaliacao/600/400',
+      },
     ],
   },
   {
@@ -55,9 +71,21 @@ const PARTNERS = [
     contactPhone: '11988880003',
     password: SEED_PARTNER_PASSWORD,
     offers: [
-      { title: '15% de desconto em livros', costInCoins: 400 },
-      { title: 'Frete grátis na primeira compra', costInCoins: 100 },
-      { title: 'Clube do livro — 1 mês grátis', costInCoins: 800 },
+      {
+        title: '15% de desconto em livros',
+        costInCoins: 400,
+        imageUrl: 'https://picsum.photos/seed/livraria-desconto/600/400',
+      },
+      {
+        title: 'Frete grátis na primeira compra',
+        costInCoins: 100,
+        imageUrl: 'https://picsum.photos/seed/livraria-frete/600/400',
+      },
+      {
+        title: 'Clube do livro — 1 mês grátis',
+        costInCoins: 800,
+        imageUrl: 'https://picsum.photos/seed/livraria-clube/600/400',
+      },
     ],
   },
 ];
@@ -162,12 +190,16 @@ async function seedPartnersWithOffers() {
             description: offerData.title,
             category: partnerData.category,
             costInCoins: offerData.costInCoins,
+            imageUrl: offerData.imageUrl,
           },
         });
-      } else if (existingOffer.costInCoins !== offerData.costInCoins) {
+      } else if (
+        existingOffer.costInCoins !== offerData.costInCoins ||
+        existingOffer.imageUrl !== offerData.imageUrl
+      ) {
         await prisma.offer.update({
           where: { id: existingOffer.id },
-          data: { costInCoins: offerData.costInCoins },
+          data: { costInCoins: offerData.costInCoins, imageUrl: offerData.imageUrl },
         });
       }
     }

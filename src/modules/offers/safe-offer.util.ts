@@ -8,6 +8,7 @@ export const SAFE_OFFER_CATALOG_SELECT = {
   description: true,
   category: true,
   costInCoins: true,
+  imageUrl: true,
   validFrom: true,
   validUntil: true,
   perUserLimit: true,

@@ -554,8 +554,8 @@ model PartnerRefreshToken {
 
 /// Oferta de resgate de um Partner, exibida no catálogo do coins-app.
 /// validFrom/validUntil nulos = sem restrição de janela. perUserLimit nulo = sem limite por
-/// pessoa — a aplicação desse limite (checar quantos resgates a pessoa já fez) é do módulo
-/// de resgate, ainda não implementado; aqui só armazena e expõe o valor.
+/// pessoa (aplicado em RedemptionsService, na criação e na confirmação — ver Sessão 17).
+/// imageUrl nulo = catálogo mostra placeholder no app, não é obrigatório no cadastro.
 model Offer {
   id           String      @id @default(cuid())
   partnerId    String
@@ -564,6 +564,7 @@ model Offer {
   description  String
   category     String
   costInCoins  Int         @default(0)
+  imageUrl     String?
   validFrom    DateTime?
   validUntil   DateTime?
   perUserLimit Int?

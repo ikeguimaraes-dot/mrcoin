@@ -14,6 +14,7 @@ interface OfferCatalogBody {
   description: string;
   category: string;
   costInCoins: number;
+  imageUrl: string | null;
   validFrom: string | null;
   validUntil: string | null;
   perUserLimit: number | null;
@@ -59,6 +60,7 @@ async function createOffer(
     validUntil: Date | null;
     costInCoins: number;
     perUserLimit: number | null;
+    imageUrl: string | null;
   }> = {},
 ): Promise<{ id: string; title: string }> {
   const suffix = randomUUID();
@@ -69,6 +71,7 @@ async function createOffer(
       description: `Offer Test ${suffix}`,
       category: 'Teste',
       costInCoins: overrides.costInCoins ?? 100,
+      imageUrl: overrides.imageUrl,
       validFrom: overrides.validFrom,
       validUntil: overrides.validUntil,
       perUserLimit: overrides.perUserLimit,
@@ -104,9 +107,12 @@ afterAll(async () => {
 });
 
 describe('GET /offers (catálogo do app) — filtro em duas camadas', () => {
-  it('oferta ACTIVE de parceiro ACTIVE aparece, com custo em coins e partner embutido', async () => {
+  it('oferta ACTIVE de parceiro ACTIVE aparece, com custo em coins, imagem e partner embutido', async () => {
     const partner = await createPartner('ACTIVE');
-    const offer = await createOffer(partner.id, { costInCoins: 250 });
+    const offer = await createOffer(partner.id, {
+      costInCoins: 250,
+      imageUrl: 'https://picsum.photos/seed/offer-test/600/400',
+    });
     const token = await createUserToken();
 
     const response = await request(server)
@@ -118,7 +124,23 @@ describe('GET /offers (catálogo do app) — filtro em duas camadas', () => {
     const found = body.items.find((o) => o.id === offer.id);
     expect(found).toBeDefined();
     expect(found?.costInCoins).toBe(250);
+    expect(found?.imageUrl).toBe('https://picsum.photos/seed/offer-test/600/400');
     expect(found?.partner).toEqual({ id: partner.id, name: partner.name, category: 'Teste' });
+  });
+
+  it('oferta sem imageUrl devolve null (imagem é opcional)', async () => {
+    const partner = await createPartner('ACTIVE');
+    const offer = await createOffer(partner.id);
+    const token = await createUserToken();
+
+    const response = await request(server)
+      .get('/offers')
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+
+    const body = response.body as ListResponseBody<OfferCatalogBody>;
+    const found = body.items.find((o) => o.id === offer.id);
+    expect(found?.imageUrl).toBeNull();
   });
 
   it('oferta ACTIVE de parceiro INACTIVE NÃO aparece', async () => {
@@ -240,7 +262,18 @@ describe('GET /offers/:id', () => {
     const body = response.body as OfferCatalogBody;
     expect(body.perUserLimit).toBe(3);
     expect(Object.keys(response.body as object).sort()).toEqual(
-      ['category', 'costInCoins', 'description', 'id', 'partner', 'perUserLimit', 'title', 'validFrom', 'validUntil'].sort(),
+      [
+        'category',
+        'costInCoins',
+        'description',
+        'id',
+        'imageUrl',
+        'partner',
+        'perUserLimit',
+        'title',
+        'validFrom',
+        'validUntil',
+      ].sort(),
     );
   });
 });
