@@ -13,6 +13,8 @@ export interface ExpiringBatch {
 export interface WalletSummary {
   walletId: string;
   cachedBalance: number;
+  totalEarned: number;
+  totalSpent: number;
   expiring: ExpiringBatch[];
 }
 
@@ -23,6 +25,13 @@ export interface WalletSummary {
  * por `batchId`, mantendo só os lotes com saldo líquido positivo. Não depende do job
  * `expire-coins` (ainda não implementado) nem de `CoinBatch.remainingCoins` (que é agregado
  * por organização, não por wallet).
+ *
+ * totalEarned/totalSpent (pra home do app) são vitalícios e líquidos de estorno — mesma
+ * lógica de "issued"/"redeemed" de dashboard.service.ts, por wallet em vez de organização e
+ * sem janela de tempo. EXPIRE fica de fora dos dois de propósito: expirar não é "gastar" (não
+ * houve resgate) e não retroage sobre "quanto entrou historicamente" — por isso
+ * `totalEarned - totalSpent` pode ficar maior que `cachedBalance` depois de uma expiração;
+ * a diferença é exatamente o total expirado, que não é exposto aqui (não foi pedido).
  */
 @Injectable()
 export class WalletsService {
@@ -33,12 +42,13 @@ export class WalletsService {
 
   async getWallet(userId: string, organizationId: string): Promise<WalletSummary> {
     const { walletId } = await this.resolveWalletId(userId, organizationId);
-    const [balance, expiring] = await Promise.all([
+    const [balance, expiring, lifetimeTotals] = await Promise.all([
       this.ledgerService.getBalance(walletId),
       this.getExpiringBatches(walletId),
+      this.getLifetimeTotals(walletId),
     ]);
 
-    return { walletId, cachedBalance: balance.cachedBalance, expiring };
+    return { walletId, cachedBalance: balance.cachedBalance, ...lifetimeTotals, expiring };
   }
 
   async getEntries(
@@ -101,5 +111,28 @@ export class WalletsService {
         expiresAt: batch.expiresAt,
       }))
       .sort((a, b) => a.expiresAt.getTime() - b.expiresAt.getTime());
+  }
+
+  private async getLifetimeTotals(walletId: string): Promise<{ totalEarned: number; totalSpent: number }> {
+    const [creditAgg, creditReversalAgg, redemptionDebitAgg, redemptionReversalAgg] = await Promise.all([
+      this.prisma.ledgerEntry.aggregate({ _sum: { amount: true }, where: { walletId, type: 'CREDIT' } }),
+      this.prisma.ledgerEntry.aggregate({
+        _sum: { amount: true },
+        where: { walletId, type: 'REVERSAL', reversalOf: { type: 'CREDIT' } },
+      }),
+      this.prisma.ledgerEntry.aggregate({
+        _sum: { amount: true },
+        where: { walletId, type: 'DEBIT', referenceType: 'REDEMPTION' },
+      }),
+      this.prisma.ledgerEntry.aggregate({
+        _sum: { amount: true },
+        where: { walletId, type: 'REVERSAL', reversalOf: { type: 'DEBIT', referenceType: 'REDEMPTION' } },
+      }),
+    ]);
+
+    return {
+      totalEarned: (creditAgg._sum.amount ?? 0) - (creditReversalAgg._sum.amount ?? 0),
+      totalSpent: (redemptionDebitAgg._sum.amount ?? 0) - (redemptionReversalAgg._sum.amount ?? 0),
+    };
   }
 }

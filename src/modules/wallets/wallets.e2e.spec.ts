@@ -16,6 +16,8 @@ interface ExpiringBatchBody {
 
 interface WalletResponseBody {
   cachedBalance: number;
+  totalEarned: number;
+  totalSpent: number;
   expiring: ExpiringBatchBody[];
 }
 
@@ -147,6 +149,8 @@ describe('GET /wallet', () => {
 
     const body = response.body as WalletResponseBody;
     expect(body.cachedBalance).toBe(350);
+    expect(body.totalEarned).toBe(500);
+    expect(body.totalSpent).toBe(150);
     expect(body.expiring).toHaveLength(1);
     expect(body.expiring[0]?.batchId).toBe(batch.id);
     expect(body.expiring[0]?.amount).toBe(350);
@@ -189,7 +193,102 @@ describe('GET /wallet', () => {
       .set('Authorization', `Bearer ${tokenB}`)
       .expect(200);
 
-    expect((response.body as WalletResponseBody).cachedBalance).toBe(0);
+    const body = response.body as WalletResponseBody;
+    expect(body.cachedBalance).toBe(0);
+    expect(body.totalEarned).toBe(0);
+    expect(body.totalSpent).toBe(0);
+  });
+});
+
+describe('totalEarned/totalSpent', () => {
+  it('CREDIT/DEBIT-REDEMPTION líquidos de estorno; EXPIRE fica de fora dos dois mas reduz cachedBalance', async () => {
+    const org = await createOrg();
+    const { userId, walletId } = await createUserWithWallet(org.id);
+    const token = await tokenFor(userId);
+
+    async function getWallet(): Promise<WalletResponseBody> {
+      const res = await request(server)
+        .get('/wallet')
+        .query({ organizationId: org.id })
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+      return res.body as WalletResponseBody;
+    }
+
+    const creditA = await ledgerService.post({
+      walletId,
+      type: 'CREDIT',
+      amount: 1000,
+      referenceType: 'DISTRIBUTION',
+      referenceId: randomUUID(),
+      description: 'Distribuição A',
+      idempotencyKey: randomUUID(),
+    });
+    const creditB = await ledgerService.post({
+      walletId,
+      type: 'CREDIT',
+      amount: 300,
+      referenceType: 'DISTRIBUTION',
+      referenceId: randomUUID(),
+      description: 'Distribuição B',
+      idempotencyKey: randomUUID(),
+    });
+    await ledgerService.post({
+      walletId,
+      type: 'DEBIT',
+      amount: 200,
+      referenceType: 'REDEMPTION',
+      referenceId: randomUUID(),
+      description: 'Resgate A',
+      idempotencyKey: randomUUID(),
+    });
+    const debitB = await ledgerService.post({
+      walletId,
+      type: 'DEBIT',
+      amount: 150,
+      referenceType: 'REDEMPTION',
+      referenceId: randomUUID(),
+      description: 'Resgate B',
+      idempotencyKey: randomUUID(),
+    });
+
+    let body = await getWallet();
+    expect(body.totalEarned).toBe(1300);
+    expect(body.totalSpent).toBe(350);
+    expect(body.cachedBalance).toBe(950);
+
+    // Estorna a distribuição B (300) — totalEarned líquido cai, totalSpent intocado.
+    await ledgerService.reverse({ entryId: creditB.id, reason: 'Correção', idempotencyKey: randomUUID() });
+    body = await getWallet();
+    expect(body.totalEarned).toBe(1000);
+    expect(body.totalSpent).toBe(350);
+    expect(body.cachedBalance).toBe(650);
+
+    // Estorna o resgate B (150) — totalSpent líquido cai, totalEarned intocado.
+    await ledgerService.reverse({ entryId: debitB.id, reason: 'Estorno de resgate', idempotencyKey: randomUUID() });
+    body = await getWallet();
+    expect(body.totalEarned).toBe(1000);
+    expect(body.totalSpent).toBe(200);
+    expect(body.cachedBalance).toBe(800);
+
+    // EXPIRE não é "gasto" nem desfaz "ganho" — fica de fora dos dois totais, mas o saldo
+    // cai de verdade. totalEarned - totalSpent (800) > cachedBalance (700): a diferença (100)
+    // é exatamente o total expirado, por definição não exposto como campo próprio.
+    await ledgerService.post({
+      walletId,
+      type: 'EXPIRE',
+      amount: 100,
+      referenceType: 'EXPIRATION',
+      referenceId: creditA.id,
+      description: 'Expiração',
+      idempotencyKey: randomUUID(),
+    });
+    body = await getWallet();
+    expect(body.totalEarned).toBe(1000);
+    expect(body.totalSpent).toBe(200);
+    expect(body.cachedBalance).toBe(700);
+    expect(body.totalEarned - body.totalSpent).toBeGreaterThan(body.cachedBalance);
+    expect(body.totalEarned - body.totalSpent - body.cachedBalance).toBe(100);
   });
 });
 
