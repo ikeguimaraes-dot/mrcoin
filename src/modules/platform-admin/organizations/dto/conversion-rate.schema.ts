@@ -1,12 +1,8 @@
 import { createZodDto } from 'nestjs-zod';
 import { z } from 'zod';
+import { conversionRateSummarySchema, ConversionRateSummaryDto } from '../../../settings/dto/conversion-rate-summary.schema';
 
-export const conversionRateSchema = z.object({
-  coinsPerReal: z.number(),
-  effectiveSince: z.string().datetime(),
-});
-
-export class ConversionRateDto extends createZodDto(conversionRateSchema) {}
+export { conversionRateSummarySchema as conversionRateSchema, ConversionRateSummaryDto as ConversionRateDto };
 
 export const updateConversionRateSchema = z.object({
   coinsPerReal: z.number().positive().max(1000),

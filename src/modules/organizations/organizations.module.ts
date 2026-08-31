@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { AuthModule } from '../auth/auth.module';
+import { SettingsModule } from '../settings/settings.module';
 import { OrganizationsController } from './organizations.controller';
 import { OrganizationsService } from './organizations.service';
 import { AdminInvitesController } from './admin-invites.controller';
@@ -8,7 +9,7 @@ import { AuditLogController } from './audit-log.controller';
 import { AuditLogService } from './audit-log.service';
 
 @Module({
-  imports: [AuthModule],
+  imports: [AuthModule, SettingsModule],
   controllers: [OrganizationsController, AdminInvitesController, AuditLogController],
   providers: [OrganizationsService, AdminInvitesService, AuditLogService],
 })

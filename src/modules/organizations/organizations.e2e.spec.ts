@@ -9,10 +9,13 @@ import { AppModule } from '../../app.module';
 import { PrismaService } from '../../prisma/prisma.service';
 import { hashPassword } from '../auth/password.util';
 import { TokenService } from '../auth/token.service';
+import { PLATFORM_JWT_SERVICE } from '../platform-admin/platform-jwt.token';
+import { DEFAULT_COINS_PER_REAL_SCALED } from '../settings/settings.constants';
 
 interface OrganizationResponseBody {
   id: string;
   name: string;
+  conversionRate: { coinsPerReal: number; effectiveSince: string };
 }
 
 interface AuditLogEntryBody {
@@ -33,9 +36,24 @@ const tokenService = new TokenService(jwtService, prisma);
 
 const createdOrgIds: string[] = [];
 const createdAdminIds: string[] = [];
+const createdPlatformAdminIds: string[] = [];
 
 let app: INestApplication;
 let server: Server;
+let platformJwtService: JwtService;
+
+async function createPlatformAdminFixture(): Promise<string> {
+  const suffix = randomUUID();
+  const platformAdmin = await prisma.platformAdmin.create({
+    data: {
+      name: `Org Test Platform Admin ${suffix}`,
+      email: `org-test-platform-admin-${suffix}@test.coins-api.dev`,
+      passwordHash: await hashPassword(FIXTURE_PASSWORD),
+    },
+  });
+  createdPlatformAdminIds.push(platformAdmin.id);
+  return platformJwtService.sign({ sub: platformAdmin.id, type: 'platform_admin' });
+}
 
 interface AdminFixture {
   adminId: string;
@@ -50,6 +68,12 @@ async function createAdmin(role: AdminRole): Promise<AdminFixture> {
     data: { name: `Org Test ${suffix}`, cnpj: suffix.replace(/-/g, '').slice(0, 14) },
   });
   createdOrgIds.push(organization.id);
+  // Toda organização precisa de uma taxa própria pra GET /organizations/me funcionar —
+  // criada aqui direto (bypassa createOrganizationWithOwnerInvite, que faz isso sozinho em
+  // produção) porque este fixture só quer um org+admin, não o fluxo de convite completo.
+  await prisma.conversionRate.create({
+    data: { organizationId: organization.id, coinsPerRealScaled: DEFAULT_COINS_PER_REAL_SCALED },
+  });
 
   const admin = await prisma.adminUser.create({
     data: {
@@ -74,6 +98,7 @@ beforeAll(async () => {
   app = moduleRef.createNestApplication();
   await app.init();
   server = app.getHttpServer() as Server;
+  platformJwtService = app.get<JwtService>(PLATFORM_JWT_SERVICE);
 }, 30000);
 
 afterAll(async () => {
@@ -81,8 +106,13 @@ afterAll(async () => {
   await prisma.adminInvite.deleteMany({ where: { organizationId: { in: createdOrgIds } } });
   await prisma.refreshToken.deleteMany({ where: { adminUserId: { in: createdAdminIds } } });
   await prisma.auditLog.deleteMany({ where: { organizationId: { in: createdOrgIds } } });
+  await prisma.conversionRate.deleteMany({ where: { organizationId: { in: createdOrgIds } } });
   await prisma.adminUser.deleteMany({ where: { id: { in: createdAdminIds } } });
   await prisma.organization.deleteMany({ where: { id: { in: createdOrgIds } } });
+  await prisma.platformAdminAuditLog.deleteMany({
+    where: { platformAdminId: { in: createdPlatformAdminIds } },
+  });
+  await prisma.platformAdmin.deleteMany({ where: { id: { in: createdPlatformAdminIds } } });
   await prisma.$disconnect();
 });
 
@@ -129,6 +159,48 @@ describe('GET/PATCH /organizations/me', () => {
       .set('Authorization', `Bearer ${managerToken}`)
       .send({ name: 'Não deveria funcionar' })
       .expect(403);
+  });
+
+  it('OWNER lê a taxa de conversão vigente da própria organização, nunca a de outra', async () => {
+    const ownerA = await createAdmin('OWNER');
+    const ownerB = await createAdmin('OWNER');
+    const ownerTokenA = await tokenFor(ownerA);
+
+    const platformAdminToken = await createPlatformAdminFixture();
+    await request(server)
+      .patch(`/platform/organizations/${ownerB.organizationId}/conversion-rate`)
+      .set('Authorization', `Bearer ${platformAdminToken}`)
+      .send({ coinsPerReal: 9.99 })
+      .expect(200);
+
+    const response = await request(server)
+      .get('/organizations/me')
+      .set('Authorization', `Bearer ${ownerTokenA}`)
+      .expect(200);
+
+    const body = response.body as OrganizationResponseBody;
+    expect(body.id).toBe(ownerA.organizationId);
+    // taxa padrão da própria org A — nunca o 9,99 que acabou de ser setado na org B
+    expect(body.conversionRate.coinsPerReal).toBe(1.25);
+  });
+
+  it('reflete a taxa vigente depois que platform admin muda', async () => {
+    const owner = await createAdmin('OWNER');
+    const ownerToken = await tokenFor(owner);
+    const platformAdminToken = await createPlatformAdminFixture();
+
+    await request(server)
+      .patch(`/platform/organizations/${owner.organizationId}/conversion-rate`)
+      .set('Authorization', `Bearer ${platformAdminToken}`)
+      .send({ coinsPerReal: 4.5 })
+      .expect(200);
+
+    const response = await request(server)
+      .get('/organizations/me')
+      .set('Authorization', `Bearer ${ownerToken}`)
+      .expect(200);
+
+    expect((response.body as OrganizationResponseBody).conversionRate.coinsPerReal).toBe(4.5);
   });
 });
 
