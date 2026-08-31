@@ -16,3 +16,25 @@ export const SAFE_OFFER_CATALOG_SELECT = {
 } satisfies Prisma.OfferSelect;
 
 export type SafeOfferCatalog = Prisma.OfferGetPayload<{ select: typeof SAFE_OFFER_CATALOG_SELECT }>;
+
+/** Shape de Offer pro CRUD de platform admin — vê tudo (qualquer status, dentro ou fora da
+ * janela de validade), diferente do catálogo público. partnerId cru + partner aninhado
+ * (id, name) só pra exibição, sem pixKey/takeRateBps. */
+export const SAFE_OFFER_PLATFORM_SELECT = {
+  id: true,
+  partnerId: true,
+  title: true,
+  description: true,
+  category: true,
+  costInCoins: true,
+  imageUrl: true,
+  validFrom: true,
+  validUntil: true,
+  perUserLimit: true,
+  status: true,
+  createdAt: true,
+  updatedAt: true,
+  partner: { select: { id: true, name: true } },
+} satisfies Prisma.OfferSelect;
+
+export type SafeOfferPlatform = Prisma.OfferGetPayload<{ select: typeof SAFE_OFFER_PLATFORM_SELECT }>;
