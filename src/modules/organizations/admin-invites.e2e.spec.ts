@@ -9,6 +9,7 @@ import { AppModule } from '../../app.module';
 import { PrismaService } from '../../prisma/prisma.service';
 import { hashPassword } from '../auth/password.util';
 import { TokenService } from '../auth/token.service';
+import { DEFAULT_COINS_PER_REAL_SCALED } from '../settings/settings.constants';
 
 interface InviteResponseBody {
   id: string;
@@ -54,16 +55,17 @@ interface AdminFixture {
 
 async function createAdmin(role: AdminRole, organizationId?: string): Promise<AdminFixture> {
   const suffix = randomUUID();
-  const orgId =
-    organizationId ??
-    (
-      await prisma.organization.create({
-        data: { name: `Invites Test Org ${suffix}`, cnpj: suffix.replace(/-/g, '').slice(0, 14) },
-      })
-    ).id;
+  let orgId = organizationId;
 
-  if (!organizationId) {
+  if (!orgId) {
+    const organization = await prisma.organization.create({
+      data: { name: `Invites Test Org ${suffix}`, cnpj: suffix.replace(/-/g, '').slice(0, 14) },
+    });
+    orgId = organization.id;
     createdOrgIds.push(orgId);
+    await prisma.conversionRate.create({
+      data: { organizationId: orgId, coinsPerRealScaled: DEFAULT_COINS_PER_REAL_SCALED },
+    });
   }
 
   const admin = await prisma.adminUser.create({
@@ -97,6 +99,7 @@ afterAll(async () => {
   await prisma.refreshToken.deleteMany({ where: { adminUserId: { in: createdAdminIds } } });
   await prisma.auditLog.deleteMany({ where: { organizationId: { in: createdOrgIds } } });
   await prisma.adminUser.deleteMany({ where: { id: { in: createdAdminIds } } });
+  await prisma.conversionRate.deleteMany({ where: { organizationId: { in: createdOrgIds } } });
   await prisma.organization.deleteMany({ where: { id: { in: createdOrgIds } } });
   await prisma.$disconnect();
 });

@@ -25,7 +25,10 @@ export interface OrganizationSummary {
   adminUserCount: number;
   memberCount: number;
   circulatingBalance: number;
-  conversionRate: ConversionRateSummary;
+  // null só deveria acontecer numa organização criada fora do caminho normal (nunca em
+  // produção — createOrganizationWithOwnerInvite sempre cria a taxa na mesma transação).
+  // Fica nullable aqui pra uma organização assim nunca derrubar a listagem inteira.
+  conversionRate: ConversionRateSummary | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -206,7 +209,11 @@ export class PlatformOrganizationsService {
         _sum: { cachedBalance: true },
         where: { membership: { organizationId: organization.id } },
       }),
-      this.conversionRateService.getCurrentRateForOrganization(organization.id),
+      // OrNull de propósito: isto alimenta a listagem (list()/getById()/update()) — uma
+      // organização sem taxa (não deveria existir fora de teste) não pode derrubar a página
+      // inteira com 500. Contextos onde a taxa é obrigatória (compra de lote, endpoint
+      // dedicado /conversion-rate) continuam usando a variante que lança.
+      this.conversionRateService.getCurrentRateForOrganizationOrNull(organization.id),
     ]);
 
     return {
@@ -218,11 +225,9 @@ export class PlatformOrganizationsService {
       adminUserCount,
       memberCount,
       circulatingBalance: walletAgg._sum.cachedBalance ?? 0,
-      conversionRate: {
-        coinsPerReal: rate.coinsPerRealScaled / 100,
-        coinsPerRealScaled: rate.coinsPerRealScaled,
-        effectiveSince: rate.createdAt,
-      },
+      conversionRate: rate
+        ? { coinsPerReal: rate.coinsPerRealScaled / 100, coinsPerRealScaled: rate.coinsPerRealScaled, effectiveSince: rate.createdAt }
+        : null,
       createdAt: organization.createdAt,
       updatedAt: organization.updatedAt,
     };

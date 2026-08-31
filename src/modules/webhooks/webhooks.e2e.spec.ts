@@ -5,6 +5,7 @@ import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import { AppModule } from '../../app.module';
 import { PrismaService } from '../../prisma/prisma.service';
+import { DEFAULT_COINS_PER_REAL_SCALED } from '../settings/settings.constants';
 
 const WEBHOOK_SECRET = process.env.ASAAS_WEBHOOK_SECRET as string;
 
@@ -22,6 +23,9 @@ async function createPendingBatchFixture() {
     data: { name: `Webhooks Test Org ${suffix}`, cnpj: suffix.replace(/-/g, '').slice(0, 14) },
   });
   createdOrgIds.push(organization.id);
+  await prisma.conversionRate.create({
+    data: { organizationId: organization.id, coinsPerRealScaled: DEFAULT_COINS_PER_REAL_SCALED },
+  });
 
   const batch = await prisma.coinBatch.create({
     data: {
@@ -50,6 +54,7 @@ afterAll(async () => {
   await app.close();
   await prisma.auditLog.deleteMany({ where: { organizationId: { in: createdOrgIds } } });
   await prisma.coinBatch.deleteMany({ where: { id: { in: createdBatchIds } } });
+  await prisma.conversionRate.deleteMany({ where: { organizationId: { in: createdOrgIds } } });
   await prisma.organization.deleteMany({ where: { id: { in: createdOrgIds } } });
   await prisma.$disconnect();
 });

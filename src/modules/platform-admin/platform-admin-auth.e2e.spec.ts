@@ -7,6 +7,7 @@ import request from 'supertest';
 import { AppModule } from '../../app.module';
 import { PrismaService } from '../../prisma/prisma.service';
 import { hashPassword } from '../auth/password.util';
+import { DEFAULT_COINS_PER_REAL_SCALED } from '../settings/settings.constants';
 
 interface LoginResponseBody {
   status: string;
@@ -46,6 +47,9 @@ async function createAdminUserFixture(): Promise<{ email: string; password: stri
   const organization = await prisma.organization.create({
     data: { name: `E2E Platform Isolation Org ${suffix}`, cnpj: suffix.replace(/-/g, '').slice(0, 14) },
   });
+  await prisma.conversionRate.create({
+    data: { organizationId: organization.id, coinsPerRealScaled: DEFAULT_COINS_PER_REAL_SCALED },
+  });
   const admin = await prisma.adminUser.create({
     data: {
       organizationId: organization.id,
@@ -79,6 +83,7 @@ afterAll(async () => {
   await prisma.refreshToken.deleteMany({ where: { adminUserId: { in: createdAdminIds } } });
   await prisma.auditLog.deleteMany({ where: { actorAdminUserId: { in: createdAdminIds } } });
   await prisma.adminUser.deleteMany({ where: { id: { in: createdAdminIds } } });
+  await prisma.conversionRate.deleteMany({ where: { organizationId: { in: createdOrgIds } } });
   await prisma.organization.deleteMany({ where: { id: { in: createdOrgIds } } });
   await prisma.$disconnect();
 });

@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { JwtService } from '@nestjs/jwt';
 import { AdminRole } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { DEFAULT_COINS_PER_REAL_SCALED } from '../settings/settings.constants';
 import { hashPassword } from './password.util';
 import { TokenService } from './token.service';
 
@@ -21,6 +22,9 @@ async function createAdminFixture(): Promise<{
 
   const organization = await prisma.organization.create({
     data: { name: `Token Test Org ${suffix}`, cnpj: suffix.replace(/-/g, '').slice(0, 14) },
+  });
+  await prisma.conversionRate.create({
+    data: { organizationId: organization.id, coinsPerRealScaled: DEFAULT_COINS_PER_REAL_SCALED },
   });
 
   const admin = await prisma.adminUser.create({
@@ -43,6 +47,7 @@ afterAll(async () => {
   await prisma.refreshToken.deleteMany({ where: { adminUserId: { in: createdAdminIds } } });
   await prisma.auditLog.deleteMany({ where: { actorAdminUserId: { in: createdAdminIds } } });
   await prisma.adminUser.deleteMany({ where: { id: { in: createdAdminIds } } });
+  await prisma.conversionRate.deleteMany({ where: { organizationId: { in: createdOrgIds } } });
   await prisma.organization.deleteMany({ where: { id: { in: createdOrgIds } } });
   await prisma.$disconnect();
 });

@@ -8,6 +8,7 @@ import { AppModule } from '../../app.module';
 import { PrismaService } from '../../prisma/prisma.service';
 import { encryptCpf, hashCpf } from '../../common/crypto/cpf-crypto.util';
 import { LedgerService } from '../ledger/ledger.service';
+import { DEFAULT_COINS_PER_REAL_SCALED } from '../settings/settings.constants';
 
 interface MembershipItemBody {
   organizationId: string;
@@ -37,6 +38,9 @@ async function createOrg(name: string): Promise<{ id: string; name: string }> {
     data: { name: `${name} ${suffix}`, cnpj: suffix.replace(/-/g, '').slice(0, 14) },
   });
   createdOrgIds.push(organization.id);
+  await prisma.conversionRate.create({
+    data: { organizationId: organization.id, coinsPerRealScaled: DEFAULT_COINS_PER_REAL_SCALED },
+  });
   return organization;
 }
 
@@ -67,6 +71,7 @@ afterAll(async () => {
   await prisma.wallet.deleteMany({ where: { id: { in: walletIds } } });
   await prisma.membership.deleteMany({ where: { userId: { in: createdUserIds } } });
   await prisma.user.deleteMany({ where: { id: { in: createdUserIds } } });
+  await prisma.conversionRate.deleteMany({ where: { organizationId: { in: createdOrgIds } } });
   await prisma.organization.deleteMany({ where: { id: { in: createdOrgIds } } });
   await prisma.$disconnect();
 });

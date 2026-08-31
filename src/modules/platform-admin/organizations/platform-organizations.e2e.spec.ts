@@ -206,6 +206,33 @@ describe('Fluxo feliz — POST/GET/PATCH /platform/organizations', () => {
     expect(created.conversionRate.coinsPerReal).toBe(2.5);
     expect(created.conversionRate.coinsPerRealScaled).toBe(250);
   });
+
+  it('organização sem taxa (fora do caminho normal) não derruba a listagem — conversionRate vem null pra ela', async () => {
+    const { token } = await createPlatformAdminFixture();
+
+    // Cria direto via Prisma, bypassando createOrganizationWithOwnerInvite — simula uma
+    // organização que, por algum motivo fora do fluxo normal, nunca ganhou uma taxa.
+    const suffix = randomUUID();
+    const orphanOrg = await prisma.organization.create({
+      data: { name: `Empresa Sem Taxa ${suffix}`, cnpj: fixtureCnpj() },
+    });
+    createdOrgIds.push(orphanOrg.id);
+
+    const listResponse = await request(server)
+      .get(`/platform/organizations?limit=100`)
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+    const listBody = listResponse.body as { items: Array<{ id: string; conversionRate: ConversionRateBody | null }> };
+    const listedOrphan = listBody.items.find((item) => item.id === orphanOrg.id);
+    expect(listedOrphan).toBeDefined();
+    expect(listedOrphan?.conversionRate).toBeNull();
+
+    const detailResponse = await request(server)
+      .get(`/platform/organizations/${orphanOrg.id}`)
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+    expect((detailResponse.body as { conversionRate: ConversionRateBody | null }).conversionRate).toBeNull();
+  });
 });
 
 describe('GET/PATCH /platform/organizations/:id/conversion-rate', () => {

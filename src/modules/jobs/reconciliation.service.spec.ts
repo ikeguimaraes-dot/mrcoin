@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { PrismaService } from '../../prisma/prisma.service';
 import { LedgerService } from '../ledger/ledger.service';
+import { DEFAULT_COINS_PER_REAL_SCALED } from '../settings/settings.constants';
 import { JobRunRecorderService } from './job-run-recorder.service';
 import { ReconciliationService } from './reconciliation.service';
 import { BalanceMismatchIssue, JobRunDetails } from './job-run.types';
@@ -20,6 +21,9 @@ async function createWalletFixture(): Promise<string> {
       name: `Reconciliation Test Org ${suffix}`,
       cnpj: suffix.replace(/-/g, '').slice(0, 14),
     },
+  });
+  await prisma.conversionRate.create({
+    data: { organizationId: organization.id, coinsPerRealScaled: DEFAULT_COINS_PER_REAL_SCALED },
   });
 
   const user = await prisma.user.create({
@@ -82,6 +86,9 @@ afterAll(async () => {
   await prisma.wallet.deleteMany({ where: { id: { in: createdWalletIds } } });
   await prisma.membership.deleteMany({ where: { id: { in: memberships.map((m) => m.id) } } });
   await prisma.user.deleteMany({ where: { id: { in: memberships.map((m) => m.userId) } } });
+  await prisma.conversionRate.deleteMany({
+    where: { organizationId: { in: memberships.map((m) => m.organizationId) } },
+  });
   await prisma.organization.deleteMany({
     where: { id: { in: memberships.map((m) => m.organizationId) } },
   });

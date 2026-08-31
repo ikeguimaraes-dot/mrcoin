@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { generate } from 'otplib';
 import { PrismaService } from '../../prisma/prisma.service';
+import { DEFAULT_COINS_PER_REAL_SCALED } from '../settings/settings.constants';
 import { hashPassword } from './password.util';
 import { MfaService } from './mfa.service';
 import { InvalidMfaCodeException } from './exceptions/invalid-mfa-code.exception';
@@ -16,6 +17,9 @@ async function createAdminFixture(): Promise<string> {
 
   const organization = await prisma.organization.create({
     data: { name: `MFA Test Org ${suffix}`, cnpj: suffix.replace(/-/g, '').slice(0, 14) },
+  });
+  await prisma.conversionRate.create({
+    data: { organizationId: organization.id, coinsPerRealScaled: DEFAULT_COINS_PER_REAL_SCALED },
   });
 
   const admin = await prisma.adminUser.create({
@@ -39,6 +43,7 @@ function anyCodeOtherThan(code: string): string {
 
 afterAll(async () => {
   await prisma.adminUser.deleteMany({ where: { id: { in: createdAdminIds } } });
+  await prisma.conversionRate.deleteMany({ where: { organizationId: { in: createdOrgIds } } });
   await prisma.organization.deleteMany({ where: { id: { in: createdOrgIds } } });
   await prisma.$disconnect();
 });

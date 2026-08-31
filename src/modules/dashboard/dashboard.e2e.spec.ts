@@ -11,6 +11,7 @@ import { encryptCpf, hashCpf } from '../../common/crypto/cpf-crypto.util';
 import { hashPassword } from '../auth/password.util';
 import { TokenService } from '../auth/token.service';
 import { LedgerService } from '../ledger/ledger.service';
+import { DEFAULT_COINS_PER_REAL_SCALED } from '../settings/settings.constants';
 
 interface SummaryResponseBody {
   availableBalance: number;
@@ -55,6 +56,9 @@ async function createAdmin(role: AdminRole): Promise<AdminFixture> {
     data: { name: `Dashboard Test Org ${suffix}`, cnpj: suffix.replace(/-/g, '').slice(0, 14) },
   });
   createdOrgIds.push(organization.id);
+  await prisma.conversionRate.create({
+    data: { organizationId: organization.id, coinsPerRealScaled: DEFAULT_COINS_PER_REAL_SCALED },
+  });
 
   const admin = await prisma.adminUser.create({
     data: {
@@ -114,6 +118,7 @@ afterAll(async () => {
   await prisma.refreshToken.deleteMany({ where: { adminUserId: { in: createdAdminIds } } });
   await prisma.adminUser.deleteMany({ where: { id: { in: createdAdminIds } } });
   await prisma.user.deleteMany({ where: { id: { in: createdUserIds } } });
+  await prisma.conversionRate.deleteMany({ where: { organizationId: { in: createdOrgIds } } });
   await prisma.organization.deleteMany({ where: { id: { in: createdOrgIds } } });
   await prisma.$disconnect();
 });

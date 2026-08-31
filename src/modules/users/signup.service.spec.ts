@@ -3,6 +3,7 @@ import { JwtService } from '@nestjs/jwt';
 import { PrismaService } from '../../prisma/prisma.service';
 import { encryptCpf, hashCpf } from '../../common/crypto/cpf-crypto.util';
 import { EmailPort, SendEmailParams } from '../../common/email/email.port';
+import { DEFAULT_COINS_PER_REAL_SCALED } from '../settings/settings.constants';
 import { SignupService } from './signup.service';
 import { UserTokenService } from './user-token.service';
 import { OrganizationRequiredException } from './exceptions/organization-required.exception';
@@ -32,6 +33,9 @@ async function createOrg(): Promise<{ id: string }> {
     data: { name: `Timing Test Org ${suffix}`, cnpj: suffix.replace(/-/g, '').slice(0, 14) },
   });
   createdOrgIds.push(organization.id);
+  await prisma.conversionRate.create({
+    data: { organizationId: organization.id, coinsPerRealScaled: DEFAULT_COINS_PER_REAL_SCALED },
+  });
   return organization;
 }
 
@@ -44,6 +48,7 @@ afterAll(async () => {
   await prisma.membership.deleteMany({ where: { userId: { in: createdUserIds } } });
   await prisma.userSignupRequest.deleteMany({ where: { organizationId: { in: createdOrgIds } } });
   await prisma.user.deleteMany({ where: { id: { in: createdUserIds } } });
+  await prisma.conversionRate.deleteMany({ where: { organizationId: { in: createdOrgIds } } });
   await prisma.organization.deleteMany({ where: { id: { in: createdOrgIds } } });
   await prisma.$disconnect();
 });

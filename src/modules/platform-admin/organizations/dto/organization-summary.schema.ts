@@ -15,7 +15,9 @@ export const organizationSummarySchema = z.object({
   adminUserCount: z.number().int(),
   memberCount: z.number().int(),
   circulatingBalance: z.number().int(),
-  conversionRate: conversionRateSchema,
+  // null só numa organização criada fora do caminho normal (nunca em produção) — a
+  // listagem tolera isso em vez de quebrar a página inteira por causa de uma linha ruim.
+  conversionRate: conversionRateSchema.nullable(),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
 });
