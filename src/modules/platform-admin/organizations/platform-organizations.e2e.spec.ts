@@ -11,6 +11,7 @@ import { PLATFORM_JWT_SERVICE } from '../platform-jwt.token';
 
 interface ConversionRateBody {
   coinsPerReal: number;
+  coinsPerRealScaled: number;
   effectiveSince: string;
 }
 
@@ -111,6 +112,7 @@ describe('Fluxo feliz — POST/GET/PATCH /platform/organizations', () => {
     expect(created.invite.inviteLink).toContain('/invites/');
     // sem coinsPerReal no create, nasce com a taxa padrão da plataforma
     expect(created.conversionRate.coinsPerReal).toBe(1.25);
+    expect(created.conversionRate.coinsPerRealScaled).toBe(125);
 
     const listResponse = await request(server)
       .get('/platform/organizations?limit=100')
@@ -131,6 +133,7 @@ describe('Fluxo feliz — POST/GET/PATCH /platform/organizations', () => {
     expect(listedOrg?.memberCount).toBe(0);
     expect(listedOrg?.circulatingBalance).toBe(0);
     expect(listedOrg?.conversionRate.coinsPerReal).toBe(1.25);
+    expect(listedOrg?.conversionRate.coinsPerRealScaled).toBe(125);
 
     const detailResponse = await request(server)
       .get(`/platform/organizations/${created.id}`)
@@ -201,6 +204,7 @@ describe('Fluxo feliz — POST/GET/PATCH /platform/organizations', () => {
     createdOrgIds.push(created.id);
 
     expect(created.conversionRate.coinsPerReal).toBe(2.5);
+    expect(created.conversionRate.coinsPerRealScaled).toBe(250);
   });
 });
 
@@ -225,14 +229,18 @@ describe('GET/PATCH /platform/organizations/:id/conversion-rate', () => {
       .get(`/platform/organizations/${organizationId}/conversion-rate`)
       .set('Authorization', `Bearer ${token}`)
       .expect(200);
-    expect((getResponse.body as ConversionRateBody).coinsPerReal).toBe(1.25);
+    const getBody = getResponse.body as ConversionRateBody;
+    expect(getBody.coinsPerReal).toBe(1.25);
+    expect(getBody.coinsPerRealScaled).toBe(125);
 
     const patchResponse = await request(server)
       .patch(`/platform/organizations/${organizationId}/conversion-rate`)
       .set('Authorization', `Bearer ${token}`)
       .send({ coinsPerReal: 3.33 })
       .expect(200);
-    expect((patchResponse.body as ConversionRateBody).coinsPerReal).toBe(3.33);
+    const patchBody = patchResponse.body as ConversionRateBody;
+    expect(patchBody.coinsPerReal).toBe(3.33);
+    expect(patchBody.coinsPerRealScaled).toBe(333);
 
     const getAfterPatch = await request(server)
       .get(`/platform/organizations/${organizationId}/conversion-rate`)

@@ -12,6 +12,7 @@ import { UpdateConversionRateInput } from './dto/conversion-rate.schema';
 
 export interface ConversionRateSummary {
   coinsPerReal: number;
+  coinsPerRealScaled: number;
   effectiveSince: Date;
 }
 
@@ -81,7 +82,11 @@ export class PlatformOrganizationsService {
       createdAt: organization.createdAt,
       updatedAt: organization.updatedAt,
       invite: { id: invite.id, expiresAt: invite.expiresAt, inviteLink: invite.inviteLink },
-      conversionRate: { coinsPerReal: conversionRate.coinsPerRealScaled / 100, effectiveSince: conversionRate.createdAt },
+      conversionRate: {
+        coinsPerReal: conversionRate.coinsPerRealScaled / 100,
+        coinsPerRealScaled: conversionRate.coinsPerRealScaled,
+        effectiveSince: conversionRate.createdAt,
+      },
     };
   }
 
@@ -149,7 +154,11 @@ export class PlatformOrganizationsService {
   async getConversionRate(organizationId: string): Promise<ConversionRateSummary> {
     await this.getExistingOrThrow(organizationId);
     const rate = await this.conversionRateService.getCurrentRateForOrganization(organizationId);
-    return { coinsPerReal: rate.coinsPerRealScaled / 100, effectiveSince: rate.createdAt };
+    return {
+      coinsPerReal: rate.coinsPerRealScaled / 100,
+      coinsPerRealScaled: rate.coinsPerRealScaled,
+      effectiveSince: rate.createdAt,
+    };
   }
 
   async updateConversionRate(
@@ -175,7 +184,11 @@ export class PlatformOrganizationsService {
       ip,
     });
 
-    return { coinsPerReal: updated.coinsPerRealScaled / 100, effectiveSince: updated.createdAt };
+    return {
+      coinsPerReal: updated.coinsPerRealScaled / 100,
+      coinsPerRealScaled: updated.coinsPerRealScaled,
+      effectiveSince: updated.createdAt,
+    };
   }
 
   private async getExistingOrThrow(organizationId: string): Promise<void> {
@@ -205,7 +218,11 @@ export class PlatformOrganizationsService {
       adminUserCount,
       memberCount,
       circulatingBalance: walletAgg._sum.cachedBalance ?? 0,
-      conversionRate: { coinsPerReal: rate.coinsPerRealScaled / 100, effectiveSince: rate.createdAt },
+      conversionRate: {
+        coinsPerReal: rate.coinsPerRealScaled / 100,
+        coinsPerRealScaled: rate.coinsPerRealScaled,
+        effectiveSince: rate.createdAt,
+      },
       createdAt: organization.createdAt,
       updatedAt: organization.updatedAt,
     };

@@ -5,7 +5,7 @@ import { UpdateOrganizationInput } from './dto/update-organization.schema';
 import { SAFE_ORGANIZATION_SELECT, SafeOrganization } from './safe-organization.util';
 
 export interface OrganizationWithConversionRate extends SafeOrganization {
-  conversionRate: { coinsPerReal: number; effectiveSince: Date };
+  conversionRate: { coinsPerReal: number; coinsPerRealScaled: number; effectiveSince: Date };
 }
 
 @Injectable()
@@ -26,7 +26,11 @@ export class OrganizationsService {
 
     return {
       ...organization,
-      conversionRate: { coinsPerReal: rate.coinsPerRealScaled / 100, effectiveSince: rate.createdAt },
+      conversionRate: {
+        coinsPerReal: rate.coinsPerRealScaled / 100,
+        coinsPerRealScaled: rate.coinsPerRealScaled,
+        effectiveSince: rate.createdAt,
+      },
     };
   }
 

@@ -15,7 +15,7 @@ import { DEFAULT_COINS_PER_REAL_SCALED } from '../settings/settings.constants';
 interface OrganizationResponseBody {
   id: string;
   name: string;
-  conversionRate: { coinsPerReal: number; effectiveSince: string };
+  conversionRate: { coinsPerReal: number; coinsPerRealScaled: number; effectiveSince: string };
 }
 
 interface AuditLogEntryBody {
@@ -182,6 +182,7 @@ describe('GET/PATCH /organizations/me', () => {
     expect(body.id).toBe(ownerA.organizationId);
     // taxa padrão da própria org A — nunca o 9,99 que acabou de ser setado na org B
     expect(body.conversionRate.coinsPerReal).toBe(1.25);
+    expect(body.conversionRate.coinsPerRealScaled).toBe(125);
   });
 
   it('reflete a taxa vigente depois que platform admin muda', async () => {
@@ -200,7 +201,9 @@ describe('GET/PATCH /organizations/me', () => {
       .set('Authorization', `Bearer ${ownerToken}`)
       .expect(200);
 
-    expect((response.body as OrganizationResponseBody).conversionRate.coinsPerReal).toBe(4.5);
+    const body = response.body as OrganizationResponseBody;
+    expect(body.conversionRate.coinsPerReal).toBe(4.5);
+    expect(body.conversionRate.coinsPerRealScaled).toBe(450);
   });
 });
 
