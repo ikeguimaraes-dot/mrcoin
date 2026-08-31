@@ -151,14 +151,15 @@ model Organization {
   createdAt       DateTime           @default(now())
   updatedAt       DateTime           @updatedAt
 
-  adminUsers     AdminUser[]
-  memberships    Membership[]
-  coinBatches    CoinBatch[]
-  distributions  Distribution[]
-  campaigns      Campaign[]
-  auditLogs      AuditLog[]
-  adminInvites   AdminInvite[]
-  signupRequests UserSignupRequest[]
+  adminUsers      AdminUser[]
+  memberships     Membership[]
+  coinBatches     CoinBatch[]
+  distributions   Distribution[]
+  campaigns       Campaign[]
+  auditLogs       AuditLog[]
+  adminInvites    AdminInvite[]
+  signupRequests  UserSignupRequest[]
+  conversionRates ConversionRate[]
 }
 
 /// Usuário do painel administrativo (coins-admin) de uma organização.
@@ -438,17 +439,21 @@ model CoinBatch {
 
 /// Taxa global de conversão R$→coins (quantos coins uma organização recebe por real
 /// aportado na compra de lote). Append-only, igual LedgerEntry: nunca UPDATE — mudar a
-/// taxa insere uma linha nova, a mais recente por createdAt é a vigente. Isso garante
-/// histórico de graça e garante estruturalmente que lotes já criados nunca são
-/// reprecificados (nada além de BatchesService.createPendingBatch lê esta tabela).
+/// taxa insere uma linha nova, a mais recente por createdAt (da mesma organizationId) é a
+/// vigente. Isso garante histórico de graça e garante estruturalmente que lotes já criados
+/// nunca são reprecificados (nada além de BatchesService.createPendingBatch lê esta tabela
+/// pra calcular preço). organizationId nullable: linhas antigas (taxa global, anterior ao
+/// modelo por-empresa) ficam órfãs, história preservada — nenhum código novo as consulta.
 model ConversionRate {
-  id                 String   @id @default(cuid())
+  id             String        @id @default(cuid())
+  organizationId String?
+  organization   Organization? @relation(fields: [organizationId], references: [id])
   /// Coins concedidos por R$ 1,00, × 100 (2 casas decimais, sem float — mesmo padrão de
   /// Partner.takeRateBps). Ex: 125 = 1,25 coins/real.
   coinsPerRealScaled Int
   createdAt          DateTime @default(now())
 
-  @@index([createdAt])
+  @@index([organizationId, createdAt])
 }
 
 /// Uma operação de distribuição de coins — individual (csvFileUrl nulo)

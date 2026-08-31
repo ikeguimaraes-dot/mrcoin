@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable } from '@nestjs/common';
 import { CoinBatch } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { BillingService, PixChargeResult } from '../billing/billing.service';
@@ -38,12 +38,19 @@ export class BatchesService {
 
     const expiresAt = addMonths(new Date(), input.validityMonths);
 
-    const rate = await this.conversionRateService.getCurrentRate();
-    const totalCoins = Math.round((input.priceInCents * rate.coinsPerRealScaled) / 10000);
+    const rate = await this.conversionRateService.getCurrentRateForOrganization(organizationId);
+    const priceInCents = Math.round((input.totalCoins * 10000) / rate.coinsPerRealScaled);
+
+    if (priceInCents <= 0) {
+      throw new BadRequestException({
+        code: 'VALIDATION_ERROR',
+        message: 'totalCoins resulta em um preço inválido com a taxa de conversão vigente.',
+      });
+    }
 
     const charge = await this.billingService.createChargeForOrganization(
       organizationId,
-      input.priceInCents,
+      priceInCents,
       'Compra de lote de coins',
       idempotencyKey,
     );
@@ -51,9 +58,9 @@ export class BatchesService {
     const batch = await this.prisma.coinBatch.create({
       data: {
         organizationId,
-        totalCoins,
-        remainingCoins: totalCoins,
-        priceInCents: input.priceInCents,
+        totalCoins: input.totalCoins,
+        remainingCoins: input.totalCoins,
+        priceInCents,
         status: 'PENDING',
         expiresAt,
         pspChargeId: charge.pspChargeId,
@@ -100,7 +107,7 @@ export class BatchesService {
     idempotencyKey: string,
   ): Promise<CreateBatchResult> {
     const paramsMatch =
-      existing.organizationId === organizationId && existing.priceInCents === input.priceInCents;
+      existing.organizationId === organizationId && existing.totalCoins === input.totalCoins;
 
     if (!paramsMatch) {
       throw new IdempotencyConflictException(idempotencyKey, { batchId: existing.id });

@@ -2,6 +2,7 @@ import { OrganizationPlan, OrganizationStatus } from '@prisma/client';
 import { createZodDto } from 'nestjs-zod';
 import { z } from 'zod';
 import { paginatedResponseSchema } from '../../../../common/schemas/paginated-response.schema';
+import { conversionRateSchema } from './conversion-rate.schema';
 
 /** Mesmo shape pro item de GET /platform/organizations e pro detalhe de
  * GET /platform/organizations/:id — não há campo a mais no detalhe hoje. */
@@ -14,6 +15,7 @@ export const organizationSummarySchema = z.object({
   adminUserCount: z.number().int(),
   memberCount: z.number().int(),
   circulatingBalance: z.number().int(),
+  conversionRate: conversionRateSchema,
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
 });

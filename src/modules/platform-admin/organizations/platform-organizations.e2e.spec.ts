@@ -9,12 +9,18 @@ import { PrismaService } from '../../../prisma/prisma.service';
 import { hashPassword } from '../../auth/password.util';
 import { PLATFORM_JWT_SERVICE } from '../platform-jwt.token';
 
+interface ConversionRateBody {
+  coinsPerReal: number;
+  effectiveSince: string;
+}
+
 interface CreateOrganizationResponseBody {
   id: string;
   name: string;
   cnpj: string;
   status: string;
   invite: { id: string; inviteLink: string };
+  conversionRate: ConversionRateBody;
 }
 
 const prisma = new PrismaService();
@@ -73,6 +79,7 @@ beforeAll(async () => {
 afterAll(async () => {
   await app.close();
   await prisma.adminInvite.deleteMany({ where: { organizationId: { in: createdOrgIds } } });
+  await prisma.conversionRate.deleteMany({ where: { organizationId: { in: createdOrgIds } } });
   await prisma.refreshToken.deleteMany({ where: { adminUserId: { in: createdAdminIds } } });
   await prisma.auditLog.deleteMany({ where: { actorAdminUserId: { in: createdAdminIds } } });
   await prisma.adminUser.deleteMany({ where: { OR: [{ id: { in: createdAdminIds } }, { organizationId: { in: createdOrgIds } }] } });
@@ -102,17 +109,28 @@ describe('Fluxo feliz — POST/GET/PATCH /platform/organizations', () => {
 
     expect(created.status).toBe('ACTIVE');
     expect(created.invite.inviteLink).toContain('/invites/');
+    // sem coinsPerReal no create, nasce com a taxa padrão da plataforma
+    expect(created.conversionRate.coinsPerReal).toBe(1.25);
 
     const listResponse = await request(server)
       .get('/platform/organizations?limit=100')
       .set('Authorization', `Bearer ${token}`)
       .expect(200);
-    const listBody = listResponse.body as { items: Array<{ id: string; adminUserCount: number; memberCount: number; circulatingBalance: number }> };
+    const listBody = listResponse.body as {
+      items: Array<{
+        id: string;
+        adminUserCount: number;
+        memberCount: number;
+        circulatingBalance: number;
+        conversionRate: ConversionRateBody;
+      }>;
+    };
     const listedOrg = listBody.items.find((item) => item.id === created.id);
     expect(listedOrg).toBeDefined();
     expect(listedOrg?.adminUserCount).toBe(0);
     expect(listedOrg?.memberCount).toBe(0);
     expect(listedOrg?.circulatingBalance).toBe(0);
+    expect(listedOrg?.conversionRate.coinsPerReal).toBe(1.25);
 
     const detailResponse = await request(server)
       .get(`/platform/organizations/${created.id}`)
@@ -163,6 +181,120 @@ describe('Fluxo feliz — POST/GET/PATCH /platform/organizations', () => {
       .set('Authorization', `Bearer ${token}`)
       .send({ name: `Empresa Dup B ${suffix}`, cnpj, ownerEmail: `owner-dup-b-${suffix}@test.coins-api.dev` })
       .expect(409);
+  });
+
+  it('coinsPerReal explícito no create usa o valor dado em vez do padrão', async () => {
+    const { token } = await createPlatformAdminFixture();
+    const suffix = randomUUID();
+
+    const response = await request(server)
+      .post('/platform/organizations')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        name: `Empresa Taxa Custom ${suffix}`,
+        cnpj: fixtureCnpj(),
+        ownerEmail: `owner-taxa-custom-${suffix}@test.coins-api.dev`,
+        coinsPerReal: 2.5,
+      })
+      .expect(201);
+    const created = response.body as CreateOrganizationResponseBody;
+    createdOrgIds.push(created.id);
+
+    expect(created.conversionRate.coinsPerReal).toBe(2.5);
+  });
+});
+
+describe('GET/PATCH /platform/organizations/:id/conversion-rate', () => {
+  it('GET devolve a taxa vigente; PATCH muda e grava audit log', async () => {
+    const { platformAdminId, token } = await createPlatformAdminFixture();
+    const suffix = randomUUID();
+
+    const createResponse = await request(server)
+      .post('/platform/organizations')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        name: `Empresa Rate Endpoint ${suffix}`,
+        cnpj: fixtureCnpj(),
+        ownerEmail: `owner-rate-endpoint-${suffix}@test.coins-api.dev`,
+      })
+      .expect(201);
+    const organizationId = (createResponse.body as CreateOrganizationResponseBody).id;
+    createdOrgIds.push(organizationId);
+
+    const getResponse = await request(server)
+      .get(`/platform/organizations/${organizationId}/conversion-rate`)
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+    expect((getResponse.body as ConversionRateBody).coinsPerReal).toBe(1.25);
+
+    const patchResponse = await request(server)
+      .patch(`/platform/organizations/${organizationId}/conversion-rate`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ coinsPerReal: 3.33 })
+      .expect(200);
+    expect((patchResponse.body as ConversionRateBody).coinsPerReal).toBe(3.33);
+
+    const getAfterPatch = await request(server)
+      .get(`/platform/organizations/${organizationId}/conversion-rate`)
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+    expect((getAfterPatch.body as ConversionRateBody).coinsPerReal).toBe(3.33);
+
+    const auditLog = await prisma.platformAdminAuditLog.findFirst({
+      where: { platformAdminId, action: 'CONVERSION_RATE_UPDATED' },
+      orderBy: { createdAt: 'desc' },
+    });
+    expect(auditLog).not.toBeNull();
+    const payload = auditLog?.payload as { organizationId?: string; newCoinsPerReal?: number } | null;
+    expect(payload?.organizationId).toBe(organizationId);
+    expect(payload?.newCoinsPerReal).toBe(3.33);
+  });
+
+  it('organização inexistente retorna 404 no GET e no PATCH', async () => {
+    const { token } = await createPlatformAdminFixture();
+
+    await request(server)
+      .get(`/platform/organizations/${randomUUID()}/conversion-rate`)
+      .set('Authorization', `Bearer ${token}`)
+      .expect(404);
+    await request(server)
+      .patch(`/platform/organizations/${randomUUID()}/conversion-rate`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ coinsPerReal: 1 })
+      .expect(404);
+  });
+
+  it('token de AdminUser e de Partner recebem 401', async () => {
+    const { token } = await createPlatformAdminFixture();
+    const suffix = randomUUID();
+
+    const createResponse = await request(server)
+      .post('/platform/organizations')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        name: `Empresa Rate Isolamento ${suffix}`,
+        cnpj: fixtureCnpj(),
+        ownerEmail: `owner-rate-isolamento-${suffix}@test.coins-api.dev`,
+      })
+      .expect(201);
+    const organizationId = (createResponse.body as CreateOrganizationResponseBody).id;
+    createdOrgIds.push(organizationId);
+
+    const jwtService = app.get(JwtService);
+    const adminToken = jwtService.sign({ sub: randomUUID(), organizationId: randomUUID(), role: 'OPERATOR', type: 'admin' });
+    const partnerToken = jwtService.sign({ sub: randomUUID(), type: 'partner' });
+
+    for (const badToken of [adminToken, partnerToken]) {
+      await request(server)
+        .get(`/platform/organizations/${organizationId}/conversion-rate`)
+        .set('Authorization', `Bearer ${badToken}`)
+        .expect(401);
+      await request(server)
+        .patch(`/platform/organizations/${organizationId}/conversion-rate`)
+        .set('Authorization', `Bearer ${badToken}`)
+        .send({ coinsPerReal: 1 })
+        .expect(401);
+    }
   });
 });
 

@@ -14,6 +14,11 @@ import {
   UpdatePlatformOrganizationDto,
   updatePlatformOrganizationSchema,
 } from './dto/update-organization.schema';
+import {
+  ConversionRateDto,
+  UpdateConversionRateDto,
+  updateConversionRateSchema,
+} from './dto/conversion-rate.schema';
 
 @ApiTags('platform-organizations')
 @Controller('platform/organizations')
@@ -59,5 +64,30 @@ export class PlatformOrganizationsController {
     @Req() request: Request,
   ) {
     return this.organizationsService.update(platformAdmin.sub, id, body, request.ip);
+  }
+
+  @Get(':id/conversion-rate')
+  @PlatformAdminAuth()
+  @ApiOperation({ summary: 'Taxa de conversão R$→coins vigente da organização' })
+  @ApiOkResponse({ type: ConversionRateDto })
+  getConversionRate(@Param('id') id: string) {
+    return this.organizationsService.getConversionRate(id);
+  }
+
+  @Patch(':id/conversion-rate')
+  @PlatformAdminAuth()
+  @ApiOperation({
+    summary:
+      'Define uma nova taxa de conversão pra essa organização — afeta só lotes criados a ' +
+      'partir de agora, nunca lotes já existentes',
+  })
+  @ApiOkResponse({ type: ConversionRateDto })
+  updateConversionRate(
+    @Param('id') id: string,
+    @Body(new ZodValidationPipe(updateConversionRateSchema)) body: UpdateConversionRateDto,
+    @CurrentPlatformAdmin() platformAdmin: PlatformAdminJwtPayload,
+    @Req() request: Request,
+  ) {
+    return this.organizationsService.updateConversionRate(platformAdmin.sub, id, body, request.ip);
   }
 }

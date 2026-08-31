@@ -5,6 +5,7 @@ import { hashInviteToken } from './invite-token.util';
 import { createOrganizationWithOwnerInvite } from './create-organization-with-owner';
 import { EmailAlreadyInUseException } from './exceptions/email-already-in-use.exception';
 import { OrganizationCnpjInUseException } from './exceptions/organization-cnpj-in-use.exception';
+import { DEFAULT_COINS_PER_REAL_SCALED } from '../settings/settings.constants';
 
 const prisma = new PrismaService();
 const ADMIN_PANEL_URL = 'http://localhost:3001';
@@ -18,6 +19,7 @@ function fixtureCnpj(): string {
 
 afterAll(async () => {
   await prisma.adminInvite.deleteMany({ where: { organizationId: { in: createdOrganizationIds } } });
+  await prisma.conversionRate.deleteMany({ where: { organizationId: { in: createdOrganizationIds } } });
   await prisma.adminUser.deleteMany({ where: { id: { in: createdAdminUserIds } } });
   await prisma.organization.deleteMany({ where: { id: { in: createdOrganizationIds } } });
   await prisma.$disconnect();
@@ -32,7 +34,11 @@ describe('createOrganizationWithOwnerInvite', () => {
       ownerEmail: `owner-${suffix}@test.coins-api.dev`,
     };
 
-    const { organization, invite } = await createOrganizationWithOwnerInvite(prisma, input, ADMIN_PANEL_URL);
+    const { organization, invite, conversionRate } = await createOrganizationWithOwnerInvite(
+      prisma,
+      input,
+      ADMIN_PANEL_URL,
+    );
     createdOrganizationIds.push(organization.id);
 
     expect(organization.name).toBe(input.name);
@@ -45,6 +51,27 @@ describe('createOrganizationWithOwnerInvite', () => {
     expect(inviteRow.invitedByAdminUserId).toBeNull();
     expect(inviteRow.tokenHash).toBe(hashInviteToken(invite.rawToken));
     expect(invite.inviteLink).toBe(`${ADMIN_PANEL_URL}/invites/${invite.rawToken}`);
+
+    // sem coinsPerReal no input, nasce com a taxa padrão da plataforma
+    expect(conversionRate.organizationId).toBe(organization.id);
+    expect(conversionRate.coinsPerRealScaled).toBe(DEFAULT_COINS_PER_REAL_SCALED);
+  });
+
+  it('coinsPerReal explícito gera a taxa correspondente em vez do padrão', async () => {
+    const suffix = randomUUID();
+    const { organization, conversionRate } = await createOrganizationWithOwnerInvite(
+      prisma,
+      {
+        name: `Empresa Taxa Custom ${suffix}`,
+        cnpj: fixtureCnpj(),
+        ownerEmail: `owner-custom-rate-${suffix}@test.coins-api.dev`,
+        coinsPerReal: 2.5,
+      },
+      ADMIN_PANEL_URL,
+    );
+    createdOrganizationIds.push(organization.id);
+
+    expect(conversionRate.coinsPerRealScaled).toBe(250);
   });
 
   it('CNPJ já existente lança OrganizationCnpjInUseException e não cria nada', async () => {

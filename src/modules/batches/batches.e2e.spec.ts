@@ -9,6 +9,8 @@ import { AppModule } from '../../app.module';
 import { PrismaService } from '../../prisma/prisma.service';
 import { hashPassword } from '../auth/password.util';
 import { TokenService } from '../auth/token.service';
+import { PLATFORM_JWT_SERVICE } from '../platform-admin/platform-jwt.token';
+import { DEFAULT_COINS_PER_REAL_SCALED } from '../settings/settings.constants';
 
 interface PixInfo {
   qrCodeImage: string;
@@ -38,9 +40,24 @@ const tokenService = new TokenService(jwtService, prisma);
 const createdOrgIds: string[] = [];
 const createdAdminIds: string[] = [];
 const createdBatchIds: string[] = [];
+const createdPlatformAdminIds: string[] = [];
 
 let app: INestApplication;
 let server: Server;
+let platformJwtService: JwtService;
+
+async function createPlatformAdminFixture(): Promise<string> {
+  const suffix = randomUUID();
+  const platformAdmin = await prisma.platformAdmin.create({
+    data: {
+      name: `Batches Test Platform Admin ${suffix}`,
+      email: `batches-test-platform-admin-${suffix}@test.coins-api.dev`,
+      passwordHash: await hashPassword(FIXTURE_PASSWORD),
+    },
+  });
+  createdPlatformAdminIds.push(platformAdmin.id);
+  return platformJwtService.sign({ sub: platformAdmin.id, type: 'platform_admin' });
+}
 
 interface AdminFixture {
   adminId: string;
@@ -67,6 +84,12 @@ async function createAdmin(role: AdminRole): Promise<AdminFixture> {
     data: { name: `Batches Test Org ${suffix}`, cnpj: generateValidCnpj() },
   });
   createdOrgIds.push(organization.id);
+  // Toda organização precisa de uma taxa própria pra POST /admin/batches funcionar —
+  // criada aqui direto (bypassa createOrganizationWithOwnerInvite, que faz isso sozinho em
+  // produção) porque este fixture só quer um org+admin, não o fluxo de convite completo.
+  await prisma.conversionRate.create({
+    data: { organizationId: organization.id, coinsPerRealScaled: DEFAULT_COINS_PER_REAL_SCALED },
+  });
 
   const admin = await prisma.adminUser.create({
     data: {
@@ -90,9 +113,12 @@ function webhookPayload(pspChargeId: string, event = 'PAYMENT_RECEIVED') {
   return { event, payment: { id: pspChargeId, status: 'RECEIVED' } };
 }
 
-async function expectedCoinsFor(priceInCents: number): Promise<number> {
-  const rate = await prisma.conversionRate.findFirstOrThrow({ orderBy: { createdAt: 'desc' } });
-  return Math.round((priceInCents * rate.coinsPerRealScaled) / 10000);
+async function expectedPriceFor(organizationId: string, totalCoins: number): Promise<number> {
+  const rate = await prisma.conversionRate.findFirstOrThrow({
+    where: { organizationId },
+    orderBy: { createdAt: 'desc' },
+  });
+  return Math.round((totalCoins * 10000) / rate.coinsPerRealScaled);
 }
 
 beforeAll(async () => {
@@ -100,15 +126,21 @@ beforeAll(async () => {
   app = moduleRef.createNestApplication();
   await app.init();
   server = app.getHttpServer() as Server;
+  platformJwtService = app.get<JwtService>(PLATFORM_JWT_SERVICE);
 }, 30000);
 
 afterAll(async () => {
   await app.close();
   await prisma.auditLog.deleteMany({ where: { organizationId: { in: createdOrgIds } } });
   await prisma.coinBatch.deleteMany({ where: { id: { in: createdBatchIds } } });
+  await prisma.conversionRate.deleteMany({ where: { organizationId: { in: createdOrgIds } } });
   await prisma.refreshToken.deleteMany({ where: { adminUserId: { in: createdAdminIds } } });
   await prisma.adminUser.deleteMany({ where: { id: { in: createdAdminIds } } });
   await prisma.organization.deleteMany({ where: { id: { in: createdOrgIds } } });
+  await prisma.platformAdminAuditLog.deleteMany({
+    where: { platformAdminId: { in: createdPlatformAdminIds } },
+  });
+  await prisma.platformAdmin.deleteMany({ where: { id: { in: createdPlatformAdminIds } } });
   await prisma.$disconnect();
 });
 
@@ -122,21 +154,22 @@ describe('POST /admin/batches — fluxo completo com PSP em sandbox', () => {
       .post('/admin/batches')
       .set('Authorization', `Bearer ${ownerToken}`)
       .set('Idempotency-Key', idempotencyKey)
-      .send({ priceInCents: 150000, validityMonths: 12 })
+      .send({ totalCoins: 2000, validityMonths: 12 })
       .expect(201);
 
     const created = createResponse.body as CreateBatchResponseBody;
     createdBatchIds.push(created.batch.id);
 
-    // Confirma que o backend CALCULA totalCoins a partir da taxa vigente (não aceita mais
-    // valor do cliente) — lê a taxa direto do banco em vez de assumir um valor fixo, porque
-    // outros specs (platform-settings) também mudam a taxa global e a ordem entre arquivos
-    // e2e não é garantida.
-    const expectedTotalCoins = await expectedCoinsFor(150000);
+    // Confirma que o backend CALCULA priceInCents a partir da taxa vigente DAQUELA
+    // organização (não aceita mais valor do cliente) — lê a taxa direto do banco em vez de
+    // assumir um valor fixo, porque outros specs também mudam taxas de outras orgs e a
+    // ordem entre arquivos e2e não é garantida.
+    const expectedPriceInCents = await expectedPriceFor(owner.organizationId, 2000);
     expect(created.batch.status).toBe('PENDING');
     expect(created.batch.organizationId).toBe(owner.organizationId);
-    expect(created.batch.totalCoins).toBe(expectedTotalCoins);
-    expect(created.batch.remainingCoins).toBe(expectedTotalCoins);
+    expect(created.batch.totalCoins).toBe(2000);
+    expect(created.batch.remainingCoins).toBe(2000);
+    expect(created.batch.priceInCents).toBe(expectedPriceInCents);
     expect(created.pix?.qrCodeImage.length).toBeGreaterThan(0);
     expect(created.pix?.copyPasteCode.length).toBeGreaterThan(0);
 
@@ -156,7 +189,7 @@ describe('POST /admin/batches — fluxo completo com PSP em sandbox', () => {
       .post('/admin/batches')
       .set('Authorization', `Bearer ${ownerToken}`)
       .set('Idempotency-Key', idempotencyKey)
-      .send({ priceInCents: 150000, validityMonths: 12 })
+      .send({ totalCoins: 2000, validityMonths: 12 })
       .expect(201);
 
     const replayed = replayResponse.body as CreateBatchResponseBody;
@@ -207,7 +240,7 @@ describe('POST /admin/batches — fluxo completo com PSP em sandbox', () => {
     const list = listResponse.body as ListBatchesResponseBody;
     const listed = list.items.find((item) => item.id === created.batch.id);
     expect(listed?.status).toBe('PAID');
-    expect(listed?.remainingCoins).toBe(expectedTotalCoins);
+    expect(listed?.remainingCoins).toBe(2000);
   }, 30000);
 
   it('Idempotency-Key repetida com body diferente retorna 409 IDEMPOTENCY_CONFLICT', async () => {
@@ -219,18 +252,18 @@ describe('POST /admin/batches — fluxo completo com PSP em sandbox', () => {
       .post('/admin/batches')
       .set('Authorization', `Bearer ${ownerToken}`)
       .set('Idempotency-Key', idempotencyKey)
-      .send({ priceInCents: 50000 })
+      .send({ totalCoins: 500 })
       .expect(201);
 
     createdBatchIds.push((first.body as CreateBatchResponseBody).batch.id);
 
-    // totalCoins não existe mais como input — o conflito agora é por priceInCents divergente
+    // priceInCents não existe mais como input — o conflito agora é por totalCoins divergente
     // na mesma Idempotency-Key.
     const conflict = await request(server)
       .post('/admin/batches')
       .set('Authorization', `Bearer ${ownerToken}`)
       .set('Idempotency-Key', idempotencyKey)
-      .send({ priceInCents: 99999 })
+      .send({ totalCoins: 999 })
       .expect(409);
 
     expect((conflict.body as { code: string }).code).toBe('IDEMPOTENCY_CONFLICT');
@@ -243,7 +276,7 @@ describe('POST /admin/batches — fluxo completo com PSP em sandbox', () => {
     const response = await request(server)
       .post('/admin/batches')
       .set('Authorization', `Bearer ${ownerToken}`)
-      .send({ priceInCents: 5000 })
+      .send({ totalCoins: 100 })
       .expect(400);
 
     expect((response.body as { code: string }).code).toBe('VALIDATION_ERROR');
@@ -257,7 +290,85 @@ describe('POST /admin/batches — fluxo completo com PSP em sandbox', () => {
       .post('/admin/batches')
       .set('Authorization', `Bearer ${managerToken}`)
       .set('Idempotency-Key', `test-${randomUUID()}`)
-      .send({ priceInCents: 5000 })
+      .send({ totalCoins: 100 })
       .expect(403);
   });
+});
+
+describe('Taxa de conversão é por organização', () => {
+  it('duas organizações com taxas diferentes geram priceInCents diferentes pro mesmo totalCoins', async () => {
+    const platformAdminToken = await createPlatformAdminFixture();
+    const ownerA = await createAdmin('OWNER');
+    const ownerB = await createAdmin('OWNER');
+    const ownerTokenA = await tokenFor(ownerA);
+    const ownerTokenB = await tokenFor(ownerB);
+
+    await request(server)
+      .patch(`/platform/organizations/${ownerB.organizationId}/conversion-rate`)
+      .set('Authorization', `Bearer ${platformAdminToken}`)
+      .send({ coinsPerReal: 2.5 })
+      .expect(200);
+
+    const responseA = await request(server)
+      .post('/admin/batches')
+      .set('Authorization', `Bearer ${ownerTokenA}`)
+      .set('Idempotency-Key', `test-${randomUUID()}`)
+      .send({ totalCoins: 1000 })
+      .expect(201);
+    const batchA = (responseA.body as CreateBatchResponseBody).batch;
+    createdBatchIds.push(batchA.id);
+
+    const responseB = await request(server)
+      .post('/admin/batches')
+      .set('Authorization', `Bearer ${ownerTokenB}`)
+      .set('Idempotency-Key', `test-${randomUUID()}`)
+      .send({ totalCoins: 1000 })
+      .expect(201);
+    const batchB = (responseB.body as CreateBatchResponseBody).batch;
+    createdBatchIds.push(batchB.id);
+
+    expect(batchA.priceInCents).toBe(await expectedPriceFor(ownerA.organizationId, 1000));
+    expect(batchB.priceInCents).toBe(await expectedPriceFor(ownerB.organizationId, 1000));
+    expect(batchA.priceInCents).not.toBe(batchB.priceInCents);
+  }, 30000);
+
+  it('mudar a taxa da organização não reprecifica lote já existente; lote novo usa a taxa nova', async () => {
+    const platformAdminToken = await createPlatformAdminFixture();
+    const owner = await createAdmin('OWNER');
+    const ownerToken = await tokenFor(owner);
+
+    const firstResponse = await request(server)
+      .post('/admin/batches')
+      .set('Authorization', `Bearer ${ownerToken}`)
+      .set('Idempotency-Key', `test-${randomUUID()}`)
+      .send({ totalCoins: 1000 })
+      .expect(201);
+    const firstBatch = (firstResponse.body as CreateBatchResponseBody).batch;
+    createdBatchIds.push(firstBatch.id);
+    const priceBeforePatch = firstBatch.priceInCents;
+
+    await request(server)
+      .patch(`/platform/organizations/${owner.organizationId}/conversion-rate`)
+      .set('Authorization', `Bearer ${platformAdminToken}`)
+      .send({ coinsPerReal: 5 })
+      .expect(200);
+
+    // lote já criado antes do PATCH continua com o priceInCents/totalCoins de quando foi criado
+    const firstBatchAfterPatch = await prisma.coinBatch.findUniqueOrThrow({ where: { id: firstBatch.id } });
+    expect(firstBatchAfterPatch.priceInCents).toBe(priceBeforePatch);
+    expect(firstBatchAfterPatch.totalCoins).toBe(1000);
+
+    // lote novo, criado DEPOIS do PATCH, usa a taxa nova
+    const secondResponse = await request(server)
+      .post('/admin/batches')
+      .set('Authorization', `Bearer ${ownerToken}`)
+      .set('Idempotency-Key', `test-${randomUUID()}`)
+      .send({ totalCoins: 1000 })
+      .expect(201);
+    const secondBatch = (secondResponse.body as CreateBatchResponseBody).batch;
+    createdBatchIds.push(secondBatch.id);
+
+    expect(secondBatch.priceInCents).toBe(await expectedPriceFor(owner.organizationId, 1000));
+    expect(secondBatch.priceInCents).not.toBe(priceBeforePatch);
+  }, 30000);
 });

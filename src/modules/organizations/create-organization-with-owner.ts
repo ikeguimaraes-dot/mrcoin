@@ -1,12 +1,15 @@
-import { Organization, PrismaClient } from '@prisma/client';
+import { ConversionRate, Organization, PrismaClient } from '@prisma/client';
 import { generateInviteToken } from './invite-token.util';
 import { EmailAlreadyInUseException } from './exceptions/email-already-in-use.exception';
 import { OrganizationCnpjInUseException } from './exceptions/organization-cnpj-in-use.exception';
+import { DEFAULT_COINS_PER_REAL_SCALED } from '../settings/settings.constants';
 
 export interface CreateOrganizationWithOwnerInput {
   name: string;
   cnpj: string;
   ownerEmail: string;
+  /** Coins por R$1,00 — opcional, sem isso a organização nasce com o padrão da plataforma. */
+  coinsPerReal?: number;
 }
 
 export interface CreateOrganizationWithOwnerResult {
@@ -17,6 +20,7 @@ export interface CreateOrganizationWithOwnerResult {
     expiresAt: Date;
     inviteLink: string;
   };
+  conversionRate: ConversionRate;
 }
 
 /**
@@ -48,8 +52,10 @@ export async function createOrganizationWithOwnerInvite(
   }
 
   const { rawToken, tokenHash, expiresAt } = generateInviteToken();
+  const coinsPerRealScaled =
+    input.coinsPerReal !== undefined ? Math.round(input.coinsPerReal * 100) : DEFAULT_COINS_PER_REAL_SCALED;
 
-  const { organization, invite } = await prisma.$transaction(async (tx) => {
+  const { organization, invite, conversionRate } = await prisma.$transaction(async (tx) => {
     const organization = await tx.organization.create({ data: { name: input.name, cnpj: input.cnpj } });
 
     const invite = await tx.adminInvite.create({
@@ -63,7 +69,11 @@ export async function createOrganizationWithOwnerInvite(
       },
     });
 
-    return { organization, invite };
+    const conversionRate = await tx.conversionRate.create({
+      data: { organizationId: organization.id, coinsPerRealScaled },
+    });
+
+    return { organization, invite, conversionRate };
   });
 
   return {
@@ -74,5 +84,6 @@ export async function createOrganizationWithOwnerInvite(
       expiresAt: invite.expiresAt,
       inviteLink: `${adminPanelUrl}/invites/${rawToken}`,
     },
+    conversionRate,
   };
 }
