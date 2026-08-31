@@ -282,6 +282,22 @@ describe('POST /admin/batches — fluxo completo com PSP em sandbox', () => {
     expect((response.body as { code: string }).code).toBe('VALIDATION_ERROR');
   });
 
+  it('totalCoins que resulta em preço abaixo do piso mínimo (R$5,00) retorna 400', async () => {
+    const owner = await createAdmin('OWNER');
+    const ownerToken = await tokenFor(owner);
+
+    // taxa padrão (1,25 coins/real) — totalCoins=1 vira priceInCents=80, bem abaixo do
+    // piso de 500 (R$5,00)
+    const response = await request(server)
+      .post('/admin/batches')
+      .set('Authorization', `Bearer ${ownerToken}`)
+      .set('Idempotency-Key', `test-${randomUUID()}`)
+      .send({ totalCoins: 1 })
+      .expect(400);
+
+    expect((response.body as { code: string }).code).toBe('VALIDATION_ERROR');
+  });
+
   it('MANAGER não pode criar lote (rota exige OWNER)', async () => {
     const manager = await createAdmin('MANAGER');
     const managerToken = await tokenFor(manager);

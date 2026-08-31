@@ -3,7 +3,7 @@ import { CoinBatch } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { BillingService, PixChargeResult } from '../billing/billing.service';
 import { ConversionRateService } from '../settings/conversion-rate.service';
-import { BATCH_LIST_PAGE_SIZE } from './batches.constants';
+import { BATCH_LIST_PAGE_SIZE, MIN_BATCH_PRICE_IN_CENTS } from './batches.constants';
 import { CreateBatchInput } from './dto/create-batch.schema';
 import { ListBatchesQuery } from './dto/list-batches.schema';
 import { IdempotencyConflictException } from './exceptions/idempotency-conflict.exception';
@@ -41,10 +41,10 @@ export class BatchesService {
     const rate = await this.conversionRateService.getCurrentRateForOrganization(organizationId);
     const priceInCents = Math.round((input.totalCoins * 10000) / rate.coinsPerRealScaled);
 
-    if (priceInCents <= 0) {
+    if (priceInCents < MIN_BATCH_PRICE_IN_CENTS) {
       throw new BadRequestException({
         code: 'VALIDATION_ERROR',
-        message: 'totalCoins resulta em um preço inválido com a taxa de conversão vigente.',
+        message: `totalCoins resulta num preço de R$${(priceInCents / 100).toFixed(2)} com a taxa de conversão vigente — abaixo do mínimo de R$${(MIN_BATCH_PRICE_IN_CENTS / 100).toFixed(2)}. Aumente a quantidade de coins.`,
       });
     }
 

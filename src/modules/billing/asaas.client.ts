@@ -1,7 +1,8 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Env } from '../../config/env.schema';
 import { centsToReais } from '../../common/money/cents-to-reais.util';
+import { redactSensitiveFields } from '../../common/audit/redact.util';
 import { PspChargeFailedException } from './exceptions/psp-charge-failed.exception';
 
 export interface CreateCustomerInput {
@@ -36,6 +37,8 @@ export interface PixQrCodeResult {
  * negócio (criar customer só se faltar, formato do dueDate) fica no BillingService. */
 @Injectable()
 export class AsaasClient {
+  private readonly logger = new Logger(AsaasClient.name);
+
   constructor(private readonly config: ConfigService<Env, true>) {}
 
   async createCustomer(input: CreateCustomerInput): Promise<CreateCustomerResult> {
@@ -76,12 +79,18 @@ export class AsaasClient {
         body: body ? JSON.stringify(body) : undefined,
       });
     } catch (error) {
+      this.logger.error(`Falha de rede ao chamar Asaas ${method} ${path}: ${(error as Error).message}`);
       throw new PspChargeFailedException(path, { cause: (error as Error).message });
     }
 
     const payload: unknown = await response.json().catch(() => undefined);
 
     if (!response.ok) {
+      // payload pode ecoar de volta campos do request (ex.: cpfCnpj em erro de /customers) —
+      // redactSensitiveFields tira qualquer chave que bata com cpf/token/senha antes de logar.
+      this.logger.error(
+        `Asaas rejeitou ${method} ${path} — status ${response.status}: ${JSON.stringify(redactSensitiveFields(payload))}`,
+      );
       throw new PspChargeFailedException(path, { status: response.status, payload });
     }
 
