@@ -60,25 +60,6 @@ async function createPlatformAdminFixture(): Promise<{ platformAdminId: string; 
   return { platformAdminId: platformAdmin.id, token };
 }
 
-async function createAdminUserFixture(): Promise<{ email: string; password: string }> {
-  const suffix = randomUUID();
-  const organization = await prisma.organization.create({
-    data: { name: `E2E Platform Partners Isolation Org ${suffix}`, cnpj: fixtureCnpj() },
-  });
-  const admin = await prisma.adminUser.create({
-    data: {
-      organizationId: organization.id,
-      name: `E2E AdminUser ${suffix}`,
-      email: `e2e-adminuser-partners-${suffix}@test.coins-api.dev`,
-      passwordHash: await hashPassword(FIXTURE_PASSWORD),
-      role: 'OPERATOR',
-    },
-  });
-  createdOrgIds.push(organization.id);
-  createdAdminIds.push(admin.id);
-  return { email: admin.email, password: FIXTURE_PASSWORD };
-}
-
 beforeAll(async () => {
   const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
   app = moduleRef.createNestApplication();
@@ -261,9 +242,11 @@ describe('Fluxo feliz — POST/GET/PATCH /platform/partners + reset-password', (
 
 describe('Isolamento total — apenas PlatformAdmin acessa /platform/partners', () => {
   it('token de AdminUser recebe 401 em todas as rotas', async () => {
-    const { email, password } = await createAdminUserFixture();
-    const loginResponse = await request(server).post('/auth/login').send({ email, password }).expect(200);
-    const accessToken = (loginResponse.body as { accessToken: string }).accessToken;
+    // Assina o token direto (não passa por POST /auth/login) — mesmo raciocínio do token de
+    // Partner logo abaixo: evita consumir o rate limit de login compartilhado entre todos os
+    // specs e2e que rodam serial no mesmo processo Jest.
+    const jwtService = app.get(JwtService);
+    const accessToken = jwtService.sign({ sub: randomUUID(), organizationId: randomUUID(), role: 'OPERATOR', type: 'admin' });
 
     await request(server)
       .get('/platform/partners')

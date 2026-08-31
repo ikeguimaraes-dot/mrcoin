@@ -90,6 +90,11 @@ function webhookPayload(pspChargeId: string, event = 'PAYMENT_RECEIVED') {
   return { event, payment: { id: pspChargeId, status: 'RECEIVED' } };
 }
 
+async function expectedCoinsFor(priceInCents: number): Promise<number> {
+  const rate = await prisma.conversionRate.findFirstOrThrow({ orderBy: { createdAt: 'desc' } });
+  return Math.round((priceInCents * rate.coinsPerRealScaled) / 10000);
+}
+
 beforeAll(async () => {
   const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
   app = moduleRef.createNestApplication();
@@ -117,16 +122,21 @@ describe('POST /admin/batches — fluxo completo com PSP em sandbox', () => {
       .post('/admin/batches')
       .set('Authorization', `Bearer ${ownerToken}`)
       .set('Idempotency-Key', idempotencyKey)
-      .send({ totalCoins: 10000, priceInCents: 150000, validityMonths: 12 })
+      .send({ priceInCents: 150000, validityMonths: 12 })
       .expect(201);
 
     const created = createResponse.body as CreateBatchResponseBody;
     createdBatchIds.push(created.batch.id);
 
+    // Confirma que o backend CALCULA totalCoins a partir da taxa vigente (não aceita mais
+    // valor do cliente) — lê a taxa direto do banco em vez de assumir um valor fixo, porque
+    // outros specs (platform-settings) também mudam a taxa global e a ordem entre arquivos
+    // e2e não é garantida.
+    const expectedTotalCoins = await expectedCoinsFor(150000);
     expect(created.batch.status).toBe('PENDING');
     expect(created.batch.organizationId).toBe(owner.organizationId);
-    expect(created.batch.totalCoins).toBe(10000);
-    expect(created.batch.remainingCoins).toBe(10000);
+    expect(created.batch.totalCoins).toBe(expectedTotalCoins);
+    expect(created.batch.remainingCoins).toBe(expectedTotalCoins);
     expect(created.pix?.qrCodeImage.length).toBeGreaterThan(0);
     expect(created.pix?.copyPasteCode.length).toBeGreaterThan(0);
 
@@ -146,7 +156,7 @@ describe('POST /admin/batches — fluxo completo com PSP em sandbox', () => {
       .post('/admin/batches')
       .set('Authorization', `Bearer ${ownerToken}`)
       .set('Idempotency-Key', idempotencyKey)
-      .send({ totalCoins: 10000, priceInCents: 150000, validityMonths: 12 })
+      .send({ priceInCents: 150000, validityMonths: 12 })
       .expect(201);
 
     const replayed = replayResponse.body as CreateBatchResponseBody;
@@ -197,7 +207,7 @@ describe('POST /admin/batches — fluxo completo com PSP em sandbox', () => {
     const list = listResponse.body as ListBatchesResponseBody;
     const listed = list.items.find((item) => item.id === created.batch.id);
     expect(listed?.status).toBe('PAID');
-    expect(listed?.remainingCoins).toBe(10000);
+    expect(listed?.remainingCoins).toBe(expectedTotalCoins);
   }, 30000);
 
   it('Idempotency-Key repetida com body diferente retorna 409 IDEMPOTENCY_CONFLICT', async () => {
@@ -209,16 +219,18 @@ describe('POST /admin/batches — fluxo completo com PSP em sandbox', () => {
       .post('/admin/batches')
       .set('Authorization', `Bearer ${ownerToken}`)
       .set('Idempotency-Key', idempotencyKey)
-      .send({ totalCoins: 5000, priceInCents: 50000 })
+      .send({ priceInCents: 50000 })
       .expect(201);
 
     createdBatchIds.push((first.body as CreateBatchResponseBody).batch.id);
 
+    // totalCoins não existe mais como input — o conflito agora é por priceInCents divergente
+    // na mesma Idempotency-Key.
     const conflict = await request(server)
       .post('/admin/batches')
       .set('Authorization', `Bearer ${ownerToken}`)
       .set('Idempotency-Key', idempotencyKey)
-      .send({ totalCoins: 9999, priceInCents: 50000 })
+      .send({ priceInCents: 99999 })
       .expect(409);
 
     expect((conflict.body as { code: string }).code).toBe('IDEMPOTENCY_CONFLICT');
@@ -231,7 +243,7 @@ describe('POST /admin/batches — fluxo completo com PSP em sandbox', () => {
     const response = await request(server)
       .post('/admin/batches')
       .set('Authorization', `Bearer ${ownerToken}`)
-      .send({ totalCoins: 100, priceInCents: 5000 })
+      .send({ priceInCents: 5000 })
       .expect(400);
 
     expect((response.body as { code: string }).code).toBe('VALIDATION_ERROR');
@@ -245,7 +257,7 @@ describe('POST /admin/batches — fluxo completo com PSP em sandbox', () => {
       .post('/admin/batches')
       .set('Authorization', `Bearer ${managerToken}`)
       .set('Idempotency-Key', `test-${randomUUID()}`)
-      .send({ totalCoins: 100, priceInCents: 5000 })
+      .send({ priceInCents: 5000 })
       .expect(403);
   });
 });

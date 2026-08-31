@@ -436,6 +436,21 @@ model CoinBatch {
   @@index([organizationId, expiresAt])
 }
 
+/// Taxa global de conversão R$→coins (quantos coins uma organização recebe por real
+/// aportado na compra de lote). Append-only, igual LedgerEntry: nunca UPDATE — mudar a
+/// taxa insere uma linha nova, a mais recente por createdAt é a vigente. Isso garante
+/// histórico de graça e garante estruturalmente que lotes já criados nunca são
+/// reprecificados (nada além de BatchesService.createPendingBatch lê esta tabela).
+model ConversionRate {
+  id                 String   @id @default(cuid())
+  /// Coins concedidos por R$ 1,00, × 100 (2 casas decimais, sem float — mesmo padrão de
+  /// Partner.takeRateBps). Ex: 125 = 1,25 coins/real.
+  coinsPerRealScaled Int
+  createdAt          DateTime @default(now())
+
+  @@index([createdAt])
+}
+
 /// Uma operação de distribuição de coins — individual (csvFileUrl nulo)
 /// ou em massa via CSV — disparada por um AdminUser.
 model Distribution {

@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { CoinBatch } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { BillingService, PixChargeResult } from '../billing/billing.service';
+import { ConversionRateService } from '../settings/conversion-rate.service';
 import { BATCH_LIST_PAGE_SIZE } from './batches.constants';
 import { CreateBatchInput } from './dto/create-batch.schema';
 import { ListBatchesQuery } from './dto/list-batches.schema';
@@ -21,6 +22,7 @@ export class BatchesService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly billingService: BillingService,
+    private readonly conversionRateService: ConversionRateService,
   ) {}
 
   async createPendingBatch(
@@ -36,6 +38,9 @@ export class BatchesService {
 
     const expiresAt = addMonths(new Date(), input.validityMonths);
 
+    const rate = await this.conversionRateService.getCurrentRate();
+    const totalCoins = Math.round((input.priceInCents * rate.coinsPerRealScaled) / 10000);
+
     const charge = await this.billingService.createChargeForOrganization(
       organizationId,
       input.priceInCents,
@@ -46,8 +51,8 @@ export class BatchesService {
     const batch = await this.prisma.coinBatch.create({
       data: {
         organizationId,
-        totalCoins: input.totalCoins,
-        remainingCoins: input.totalCoins,
+        totalCoins,
+        remainingCoins: totalCoins,
         priceInCents: input.priceInCents,
         status: 'PENDING',
         expiresAt,
@@ -95,9 +100,7 @@ export class BatchesService {
     idempotencyKey: string,
   ): Promise<CreateBatchResult> {
     const paramsMatch =
-      existing.organizationId === organizationId &&
-      existing.totalCoins === input.totalCoins &&
-      existing.priceInCents === input.priceInCents;
+      existing.organizationId === organizationId && existing.priceInCents === input.priceInCents;
 
     if (!paramsMatch) {
       throw new IdempotencyConflictException(idempotencyKey, { batchId: existing.id });
