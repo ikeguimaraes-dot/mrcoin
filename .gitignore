@@ -10,6 +10,8 @@ openapi.json
 .env.local
 .env.test
 .env.*.local
+key
+platform-admin-password-reset-*.txt
 
 # logs
 *.log

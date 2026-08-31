@@ -414,6 +414,7 @@ model LedgerEntry {
   @@index([walletId, createdAt])
   @@index([batchId])
   @@index([distributionItemId])
+  @@index([type, referenceType, createdAt])
 }
 
 /// Lote de coins comprado por uma organização. Consumido em ordem FIFO

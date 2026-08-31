@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { getUtcMonthRange } from '../../common/date/utc-month-range.util';
 
 export interface DashboardSummary {
   availableBalance: number;
@@ -123,10 +124,4 @@ export class DashboardService {
       })),
     };
   }
-}
-
-function getUtcMonthRange(reference: Date = new Date()): { monthStart: Date; monthEnd: Date } {
-  const monthStart = new Date(Date.UTC(reference.getUTCFullYear(), reference.getUTCMonth(), 1));
-  const monthEnd = new Date(Date.UTC(reference.getUTCFullYear(), reference.getUTCMonth() + 1, 1));
-  return { monthStart, monthEnd };
 }
