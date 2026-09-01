@@ -63,6 +63,36 @@ async function createOrg(): Promise<{ id: string }> {
   return organization;
 }
 
+/** Cria o estado que uma distribuição deixaria pra trás: User PENDING_CLAIM + Membership
+ * (sem contato verificado nenhum) — é o único jeito de um CPF chegar elegível pro claim. */
+async function createPendingClaim(
+  organizationId: string,
+  overrides: Partial<{ membershipType: 'CUSTOMER' | 'EMPLOYEE'; externalRef: string; walletBalance: number }> = {},
+): Promise<{ cpf: string; userId: string; membershipId: string; walletId: string }> {
+  const cpf = randomCpf();
+  const cpfHash = hashCpf(cpf);
+  const suffix = randomUUID();
+
+  const pendingUser = await prisma.user.create({
+    data: { cpfEncrypted: encryptCpf(cpf), cpfHash, name: `Criado por Distribuição ${suffix}`, status: 'PENDING_CLAIM' },
+  });
+  createdUserIds.push(pendingUser.id);
+
+  const membership = await prisma.membership.create({
+    data: {
+      userId: pendingUser.id,
+      organizationId,
+      type: overrides.membershipType ?? 'CUSTOMER',
+      externalRef: overrides.externalRef,
+    },
+  });
+  const wallet = await prisma.wallet.create({
+    data: { membershipId: membership.id, cachedBalance: overrides.walletBalance ?? 0 },
+  });
+
+  return { cpf, userId: pendingUser.id, membershipId: membership.id, walletId: wallet.id };
+}
+
 function extractCode(email: string): string {
   const sent = [...capturedEmails].reverse().find((entry) => entry.to === email);
   const match = sent?.text.match(/\d{6}/);
@@ -118,9 +148,7 @@ afterAll(async () => {
   await prisma.wallet.deleteMany({ where: { id: { in: walletIds } } });
   await prisma.membership.deleteMany({ where: { userId: { in: createdUserIds } } });
   const cpfHashes = createdUserIds.length > 0 ? await cpfHashesOf(createdUserIds) : [];
-  await prisma.userSignupRequest.deleteMany({
-    where: { OR: [{ organizationId: { in: createdOrgIds } }, { cpfHash: { in: cpfHashes } }] },
-  });
+  await prisma.userSignupRequest.deleteMany({ where: { cpfHash: { in: cpfHashes } } });
   await prisma.userRefreshToken.deleteMany({ where: { userId: { in: createdUserIds } } });
   await prisma.user.deleteMany({ where: { id: { in: createdUserIds } } });
   await prisma.conversionRate.deleteMany({ where: { organizationId: { in: createdOrgIds } } });
@@ -133,25 +161,22 @@ async function cpfHashesOf(userIds: string[]): Promise<string[]> {
   return users.map((u) => u.cpfHash);
 }
 
-describe('Fluxo completo de signup', () => {
-  it('request OTP -> verify cria User+Membership+Wallet e retorna sessão válida em GET /wallet', async () => {
+describe('Fluxo completo de signup (claim)', () => {
+  it('request OTP -> verify promove PENDING_CLAIM pra ACTIVE e retorna sessão válida em GET /wallet', async () => {
     const org = await createOrg();
-    const cpf = randomCpf();
+    const { cpf, membershipId } = await createPendingClaim(org.id);
     const email = `signup-${randomUUID()}@test.coins-api.dev`;
 
     const requestRes = await request(server)
       .post('/users/signup')
-      .send({ cpf, name: 'Fulano de Tal', email, organizationId: org.id, membershipType: 'CUSTOMER' })
+      .send({ cpf, name: 'Fulano de Tal', email })
       .expect(200);
 
     expect((requestRes.body as RequestOtpResponseBody).expiresAt).toBeDefined();
 
     const code = extractCode(email);
 
-    const verifyRes = await request(server)
-      .post('/users/signup/verify')
-      .send({ cpf, organizationId: org.id, code })
-      .expect(200);
+    const verifyRes = await request(server).post('/users/signup/verify').send({ cpf, code }).expect(200);
 
     const verifyBody = verifyRes.body as VerifyResponseBody;
     expect(verifyBody.accessToken).toBeTruthy();
@@ -159,13 +184,11 @@ describe('Fluxo completo de signup', () => {
     expect(verifyBody.tokenType).toBe('Bearer');
 
     const user = await prisma.user.findUniqueOrThrow({ where: { cpfHash: hashCpf(cpf) } });
-    createdUserIds.push(user.id);
     expect(decryptCpf(user.cpfEncrypted)).toBe(cpf);
     expect(user.email).toBe(email);
+    expect(user.status).toBe('ACTIVE');
 
-    const membership = await prisma.membership.findUniqueOrThrow({
-      where: { userId_organizationId: { userId: user.id, organizationId: org.id } },
-    });
+    const membership = await prisma.membership.findUniqueOrThrow({ where: { id: membershipId } });
     expect(membership.type).toBe('CUSTOMER');
 
     const wallet = await prisma.wallet.findUniqueOrThrow({ where: { membershipId: membership.id } });
@@ -179,151 +202,46 @@ describe('Fluxo completo de signup', () => {
 
     expect((walletRes.body as WalletResponseBody).cachedBalance).toBe(0);
   });
-
-  it('CPF já cadastrado entra numa organização nova sem duplicar User, e o OTP vai pro e-mail já cadastrado', async () => {
-    const orgA = await createOrg();
-    const orgB = await createOrg();
-    const cpf = randomCpf();
-    const originalEmail = `original-${randomUUID()}@test.coins-api.dev`;
-    const attackerSuppliedEmail = `attacker-${randomUUID()}@test.coins-api.dev`;
-
-    await request(server)
-      .post('/users/signup')
-      .send({ cpf, name: 'Original', email: originalEmail, organizationId: orgA.id, membershipType: 'CUSTOMER' })
-      .expect(200);
-    const codeA = extractCode(originalEmail);
-    await request(server)
-      .post('/users/signup/verify')
-      .send({ cpf, organizationId: orgA.id, code: codeA })
-      .expect(200);
-
-    const userAfterFirstSignup = await prisma.user.findUniqueOrThrow({ where: { cpfHash: hashCpf(cpf) } });
-    createdUserIds.push(userAfterFirstSignup.id);
-
-    const emailsBeforeSecondRequest = capturedEmails.length;
-
-    await request(server)
-      .post('/users/signup')
-      .send({
-        cpf,
-        name: 'Nome Diferente',
-        email: attackerSuppliedEmail,
-        organizationId: orgB.id,
-        membershipType: 'EMPLOYEE',
-        externalRef: 'EMP-42',
-      })
-      .expect(200);
-
-    const sentAfterSecondRequest = capturedEmails.slice(emailsBeforeSecondRequest);
-    expect(sentAfterSecondRequest.some((e) => e.to === attackerSuppliedEmail)).toBe(false);
-    expect(sentAfterSecondRequest.some((e) => e.to === originalEmail)).toBe(true);
-
-    const codeB = extractCode(originalEmail);
-    await request(server)
-      .post('/users/signup/verify')
-      .send({ cpf, organizationId: orgB.id, code: codeB })
-      .expect(200);
-
-    const userAfterSecondSignup = await prisma.user.findUniqueOrThrow({ where: { cpfHash: hashCpf(cpf) } });
-    expect(userAfterSecondSignup.id).toBe(userAfterFirstSignup.id);
-    expect(userAfterSecondSignup.email).toBe(originalEmail);
-
-    const membershipB = await prisma.membership.findUniqueOrThrow({
-      where: { userId_organizationId: { userId: userAfterFirstSignup.id, organizationId: orgB.id } },
-    });
-    expect(membershipB.type).toBe('EMPLOYEE');
-    expect(membershipB.externalRef).toBe('EMP-42');
-  });
-
-  it('signup pra org onde o CPF já é membro retorna MEMBERSHIP_ALREADY_EXISTS sem enviar e-mail', async () => {
-    const org = await createOrg();
-    const cpf = randomCpf();
-    const email = `dup-${randomUUID()}@test.coins-api.dev`;
-
-    await request(server)
-      .post('/users/signup')
-      .send({ cpf, name: 'X', email, organizationId: org.id, membershipType: 'CUSTOMER' })
-      .expect(200);
-    const code = extractCode(email);
-    await request(server).post('/users/signup/verify').send({ cpf, organizationId: org.id, code }).expect(200);
-
-    const user = await prisma.user.findUniqueOrThrow({ where: { cpfHash: hashCpf(cpf) } });
-    createdUserIds.push(user.id);
-
-    const emailCountBefore = capturedEmails.length;
-    const response = await request(server)
-      .post('/users/signup')
-      .send({ cpf, name: 'X', email, organizationId: org.id, membershipType: 'CUSTOMER' })
-      .expect(409);
-
-    expect((response.body as ErrorResponseBody).code).toBe('MEMBERSHIP_ALREADY_EXISTS');
-    expect(capturedEmails.length).toBe(emailCountBefore);
-  });
 });
 
 describe('Claim de conta PENDING_CLAIM (criada por distribuição, sem contato verificado)', () => {
   it('reivindica com o próprio e-mail, promove pra ACTIVE e preserva Membership/Wallet/saldo já creditado', async () => {
     const org = await createOrg();
-    const cpf = randomCpf();
-    const cpfHash = hashCpf(cpf);
-
-    const pendingUser = await prisma.user.create({
-      data: {
-        cpfEncrypted: encryptCpf(cpf),
-        cpfHash,
-        name: 'Criado por Distribuição',
-        status: 'PENDING_CLAIM',
-      },
+    const { cpf, userId, membershipId, walletId } = await createPendingClaim(org.id, {
+      membershipType: 'EMPLOYEE',
+      externalRef: 'EMP-1',
+      walletBalance: 300,
     });
-    createdUserIds.push(pendingUser.id);
-
-    const membership = await prisma.membership.create({
-      data: { userId: pendingUser.id, organizationId: org.id, type: 'EMPLOYEE', externalRef: 'EMP-1' },
-    });
-    const wallet = await prisma.wallet.create({ data: { membershipId: membership.id, cachedBalance: 300 } });
 
     const claimEmail = `claim-${randomUUID()}@test.coins-api.dev`;
     const emailsBefore = capturedEmails.length;
 
-    // Não pode bloquear com MEMBERSHIP_ALREADY_EXISTS mesmo já existindo Membership pra essa
-    // org — é isso que caracteriza um claim (em vez de um novo signup).
     await request(server)
       .post('/users/signup')
-      .send({
-        cpf,
-        name: 'Nome Escolhido No Claim',
-        email: claimEmail,
-        organizationId: org.id,
-        membershipType: 'CUSTOMER',
-      })
+      .send({ cpf, name: 'Nome Escolhido No Claim', email: claimEmail })
       .expect(200);
 
     const sentAfterRequest = capturedEmails.slice(emailsBefore);
     expect(sentAfterRequest.some((e) => e.to === claimEmail)).toBe(true);
 
     const code = extractCode(claimEmail);
-    const verifyRes = await request(server)
-      .post('/users/signup/verify')
-      .send({ cpf, organizationId: org.id, code })
-      .expect(200);
+    const verifyRes = await request(server).post('/users/signup/verify').send({ cpf, code }).expect(200);
 
     const verifyBody = verifyRes.body as VerifyResponseBody;
     expect(verifyBody.accessToken).toBeTruthy();
 
-    const promotedUser = await prisma.user.findUniqueOrThrow({ where: { id: pendingUser.id } });
+    const promotedUser = await prisma.user.findUniqueOrThrow({ where: { id: userId } });
     expect(promotedUser.status).toBe('ACTIVE');
     expect(promotedUser.email).toBe(claimEmail);
 
     // Membership/Wallet são reaproveitados (mesmo id), não duplicados — e o membershipType
     // definido na distribuição original não é sobrescrito pelo que a pessoa mandar no claim.
-    const membershipsAfter = await prisma.membership.findMany({
-      where: { userId: pendingUser.id, organizationId: org.id },
-    });
+    const membershipsAfter = await prisma.membership.findMany({ where: { userId, organizationId: org.id } });
     expect(membershipsAfter).toHaveLength(1);
-    expect(membershipsAfter[0]?.id).toBe(membership.id);
+    expect(membershipsAfter[0]?.id).toBe(membershipId);
     expect(membershipsAfter[0]?.type).toBe('EMPLOYEE');
 
-    const walletAfter = await prisma.wallet.findUniqueOrThrow({ where: { id: wallet.id } });
+    const walletAfter = await prisma.wallet.findUniqueOrThrow({ where: { id: walletId } });
     expect(walletAfter.cachedBalance).toBe(300);
 
     const walletRes = await request(server)
@@ -334,20 +252,9 @@ describe('Claim de conta PENDING_CLAIM (criada por distribuição, sem contato v
     expect((walletRes.body as WalletResponseBody).cachedBalance).toBe(300);
   });
 
-  it('reivindica sem informar organizationId — a pessoa só prova o CPF, sem escolher organização', async () => {
+  it('reivindica sem nenhuma organização no body — a pessoa só prova o CPF', async () => {
     const org = await createOrg();
-    const cpf = randomCpf();
-    const cpfHash = hashCpf(cpf);
-
-    const pendingUser = await prisma.user.create({
-      data: { cpfEncrypted: encryptCpf(cpf), cpfHash, name: 'Criado por Distribuição', status: 'PENDING_CLAIM' },
-    });
-    createdUserIds.push(pendingUser.id);
-
-    const membership = await prisma.membership.create({
-      data: { userId: pendingUser.id, organizationId: org.id, type: 'EMPLOYEE' },
-    });
-    await prisma.wallet.create({ data: { membershipId: membership.id, cachedBalance: 50 } });
+    const { cpf, userId } = await createPendingClaim(org.id, { membershipType: 'EMPLOYEE', walletBalance: 50 });
 
     const claimEmail = `claim-no-org-${randomUUID()}@test.coins-api.dev`;
 
@@ -362,7 +269,7 @@ describe('Claim de conta PENDING_CLAIM (criada por distribuição, sem contato v
     const verifyBody = verifyRes.body as VerifyResponseBody;
     expect(verifyBody.accessToken).toBeTruthy();
 
-    const promotedUser = await prisma.user.findUniqueOrThrow({ where: { id: pendingUser.id } });
+    const promotedUser = await prisma.user.findUniqueOrThrow({ where: { id: userId } });
     expect(promotedUser.status).toBe('ACTIVE');
   });
 
@@ -489,30 +396,17 @@ describe('Claim de conta PENDING_CLAIM (criada por distribuição, sem contato v
   });
 });
 
-describe('Signup novo sem PENDING_CLAIM — organizationId continua obrigatório', () => {
-  it('sem organizationId nem PENDING_CLAIM prévio retorna ORGANIZATION_REQUIRED', async () => {
+describe('Signup sem PENDING_CLAIM — CPF precisa ter sido convidado', () => {
+  it('CPF nunca visto retorna 404 CPF_NOT_INVITED (não 500)', async () => {
     const cpf = randomCpf();
-    const email = `no-org-fresh-${randomUUID()}@test.coins-api.dev`;
+    const email = `never-seen-${randomUUID()}@test.coins-api.dev`;
 
-    const response = await request(server).post('/users/signup').send({ cpf, name: 'X', email }).expect(400);
+    const response = await request(server).post('/users/signup').send({ cpf, name: 'X', email }).expect(404);
 
-    expect((response.body as ErrorResponseBody).code).toBe('ORGANIZATION_REQUIRED');
+    expect((response.body as ErrorResponseBody).code).toBe('CPF_NOT_INVITED');
   });
 
-  it('organizationId sem membershipType retorna VALIDATION_ERROR', async () => {
-    const org = await createOrg();
-    const cpf = randomCpf();
-    const email = `no-membership-type-${randomUUID()}@test.coins-api.dev`;
-
-    const response = await request(server)
-      .post('/users/signup')
-      .send({ cpf, name: 'X', email, organizationId: org.id })
-      .expect(400);
-
-    expect((response.body as ErrorResponseBody).code).toBe('VALIDATION_ERROR');
-  });
-
-  it('anti-enumeração: CPF nunca visto e CPF já ACTIVE (sem PENDING_CLAIM) devolvem a MESMA resposta sem organizationId', async () => {
+  it('anti-enumeração: CPF nunca visto e CPF já ACTIVE (sem PENDING_CLAIM) devolvem a MESMA resposta', async () => {
     const activeCpf = randomCpf();
     const activeUser = await prisma.user.create({
       data: {
@@ -528,34 +422,31 @@ describe('Signup novo sem PENDING_CLAIM — organizationId continua obrigatório
     const responseForNewCpf = await request(server)
       .post('/users/signup')
       .send({ cpf: randomCpf(), name: 'X', email: `new-e2e-${randomUUID()}@test.coins-api.dev` })
-      .expect(400);
+      .expect(404);
 
     const responseForActiveCpf = await request(server)
       .post('/users/signup')
       .send({ cpf: activeCpf, name: 'X', email: `ignored-e2e-${randomUUID()}@test.coins-api.dev` })
-      .expect(400);
+      .expect(404);
 
     // Não pode dar pra distinguir, pela resposta HTTP, "esse CPF nunca existiu" de "esse CPF
     // já é uma conta ACTIVE" — os dois viram exatamente o mesmo corpo de erro.
     expect(responseForNewCpf.body).toEqual(responseForActiveCpf.body);
-    expect((responseForNewCpf.body as ErrorResponseBody).code).toBe('ORGANIZATION_REQUIRED');
+    expect((responseForNewCpf.body as ErrorResponseBody).code).toBe('CPF_NOT_INVITED');
   });
 });
 
 describe('Verificação de OTP — casos de erro', () => {
   it('código errado incrementa attempts e falha com OTP_INVALID', async () => {
     const org = await createOrg();
-    const cpf = randomCpf();
+    const { cpf } = await createPendingClaim(org.id);
     const email = `wrong-${randomUUID()}@test.coins-api.dev`;
 
-    await request(server)
-      .post('/users/signup')
-      .send({ cpf, name: 'X', email, organizationId: org.id, membershipType: 'CUSTOMER' })
-      .expect(200);
+    await request(server).post('/users/signup').send({ cpf, name: 'X', email }).expect(200);
 
     const response = await request(server)
       .post('/users/signup/verify')
-      .send({ cpf, organizationId: org.id, code: '000000' })
+      .send({ cpf, code: '000000' })
       .expect(401);
 
     expect((response.body as ErrorResponseBody).code).toBe('OTP_INVALID');
@@ -563,24 +454,18 @@ describe('Verificação de OTP — casos de erro', () => {
 
   it('5ª tentativa errada vira OTP_TOO_MANY_ATTEMPTS', async () => {
     const org = await createOrg();
-    const cpf = randomCpf();
+    const { cpf } = await createPendingClaim(org.id);
     const email = `bruteforce-${randomUUID()}@test.coins-api.dev`;
 
-    await request(server)
-      .post('/users/signup')
-      .send({ cpf, name: 'X', email, organizationId: org.id, membershipType: 'CUSTOMER' })
-      .expect(200);
+    await request(server).post('/users/signup').send({ cpf, name: 'X', email }).expect(200);
 
     for (let i = 0; i < 4; i += 1) {
-      await request(server)
-        .post('/users/signup/verify')
-        .send({ cpf, organizationId: org.id, code: '000000' })
-        .expect(401);
+      await request(server).post('/users/signup/verify').send({ cpf, code: '000000' }).expect(401);
     }
 
     const response = await request(server)
       .post('/users/signup/verify')
-      .send({ cpf, organizationId: org.id, code: '000000' })
+      .send({ cpf, code: '000000' })
       .expect(429);
 
     expect((response.body as ErrorResponseBody).code).toBe('OTP_TOO_MANY_ATTEMPTS');
@@ -588,24 +473,18 @@ describe('Verificação de OTP — casos de erro', () => {
 
   it('código expirado retorna OTP_EXPIRED', async () => {
     const org = await createOrg();
-    const cpf = randomCpf();
+    const { cpf } = await createPendingClaim(org.id);
     const email = `expired-${randomUUID()}@test.coins-api.dev`;
 
-    await request(server)
-      .post('/users/signup')
-      .send({ cpf, name: 'X', email, organizationId: org.id, membershipType: 'CUSTOMER' })
-      .expect(200);
+    await request(server).post('/users/signup').send({ cpf, name: 'X', email }).expect(200);
     const code = extractCode(email);
 
     await prisma.userSignupRequest.updateMany({
-      where: { cpfHash: hashCpf(cpf), organizationId: org.id },
+      where: { cpfHash: hashCpf(cpf) },
       data: { expiresAt: new Date(Date.now() - 1000) },
     });
 
-    const response = await request(server)
-      .post('/users/signup/verify')
-      .send({ cpf, organizationId: org.id, code })
-      .expect(400);
+    const response = await request(server).post('/users/signup/verify').send({ cpf, code }).expect(400);
 
     expect((response.body as ErrorResponseBody).code).toBe('OTP_EXPIRED');
   });
@@ -614,28 +493,19 @@ describe('Verificação de OTP — casos de erro', () => {
 describe('Segurança — CPF nunca em claro em log', () => {
   it('nenhuma escrita em stdout/stderr durante o fluxo completo contém o CPF em claro', async () => {
     const org = await createOrg();
-    const cpf = randomCpf();
+    const { cpf } = await createPendingClaim(org.id);
     const email = `nolog-${randomUUID()}@test.coins-api.dev`;
 
     const stdoutSpy = jest.spyOn(process.stdout, 'write').mockImplementation(() => true);
     const stderrSpy = jest.spyOn(process.stderr, 'write').mockImplementation(() => true);
 
     try {
-      await request(server)
-        .post('/users/signup')
-        .send({ cpf, name: 'Sem Log', email, organizationId: org.id, membershipType: 'CUSTOMER' })
-        .expect(200);
+      await request(server).post('/users/signup').send({ cpf, name: 'Sem Log', email }).expect(200);
 
-      await request(server)
-        .post('/users/signup/verify')
-        .send({ cpf, organizationId: org.id, code: '000000' })
-        .expect(401);
+      await request(server).post('/users/signup/verify').send({ cpf, code: '000000' }).expect(401);
 
       const code = extractCode(email);
-      await request(server)
-        .post('/users/signup/verify')
-        .send({ cpf, organizationId: org.id, code })
-        .expect(200);
+      await request(server).post('/users/signup/verify').send({ cpf, code }).expect(200);
     } finally {
       const allOutput = [...stdoutSpy.mock.calls, ...stderrSpy.mock.calls]
         .map((call) => String(call[0]))
@@ -645,8 +515,5 @@ describe('Segurança — CPF nunca em claro em log', () => {
 
       expect(allOutput).not.toContain(cpf);
     }
-
-    const user = await prisma.user.findUniqueOrThrow({ where: { cpfHash: hashCpf(cpf) } });
-    createdUserIds.push(user.id);
   });
 });

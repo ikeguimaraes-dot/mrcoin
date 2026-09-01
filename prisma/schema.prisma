@@ -158,7 +158,6 @@ model Organization {
   campaigns       Campaign[]
   auditLogs       AuditLog[]
   adminInvites    AdminInvite[]
-  signupRequests  UserSignupRequest[]
   conversionRates ConversionRate[]
 }
 
@@ -324,29 +323,22 @@ model Membership {
 }
 
 /// Pedido de signup pendente — código OTP de 6 dígitos (hash), aguardando verificação.
-/// Só vira User+Membership+Wallet no verify; nunca cria User "parcial". Se o CPF já tem
-/// User, name/phone/email aqui são ignorados no verify (o OTP vai pro e-mail já cadastrado,
-/// nunca pro e-mail deste registro — ver AdminInvitesService/organizations pro mesmo padrão
-/// de "estado pendente em tabela própria" usado pra convite de admin).
-/// organizationId/membershipType nulos = claim de um User PENDING_CLAIM já existente (prova
-/// só o CPF, sem escolher organização — a(s) Membership(s) já existe(m), criada(s) pela
-/// distribuição). Preenchidos = signup novo numa organização específica, como antes.
+/// Signup só existe como claim de um User PENDING_CLAIM já existente (prova só o CPF, sem
+/// escolher organização — a(s) Membership(s) já existe(m), criada(s) pela distribuição). Se
+/// o CPF não tiver User PENDING_CLAIM, o request é rejeitado antes de chegar aqui
+/// (CpfNotInvitedException) — nunca cria User "parcial".
 model UserSignupRequest {
-  id             String          @id @default(cuid())
-  cpfEncrypted   String
-  cpfHash        String
-  name           String
-  phone          String?
-  email          String
-  organizationId String?
-  organization   Organization?   @relation(fields: [organizationId], references: [id])
-  membershipType MembershipType?
-  externalRef    String?
-  codeHash       String
-  attempts       Int             @default(0)
-  expiresAt      DateTime
-  consumedAt     DateTime?
-  createdAt      DateTime        @default(now())
+  id           String    @id @default(cuid())
+  cpfEncrypted String
+  cpfHash      String
+  name         String
+  phone        String?
+  email        String
+  codeHash     String
+  attempts     Int       @default(0)
+  expiresAt    DateTime
+  consumedAt   DateTime?
+  createdAt    DateTime  @default(now())
 
   @@index([cpfHash])
 }

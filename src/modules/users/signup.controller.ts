@@ -21,7 +21,7 @@ export class SignupController {
   @Post()
   @UseGuards(SignupRateLimitGuard)
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Inicia o cadastro (ou o claim de uma conta pendente) e envia o código por e-mail' })
+  @ApiOperation({ summary: 'Inicia o claim de uma conta pendente (criada por distribuição) e envia o código por e-mail' })
   @ApiOkResponse({ type: RequestOtpResponseDto })
   requestOtp(@Body(new ZodValidationPipe(requestSignupSchema)) body: RequestSignupDto) {
     return this.signupService.requestOtp(body);

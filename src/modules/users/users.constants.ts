@@ -7,11 +7,3 @@ export const USER_ACCESS_TOKEN_TTL_DAYS = 30;
 /** Mesmo valor do REFRESH_TOKEN_TTL_DAYS do admin (auth.constants.ts) — reaproveita o TTL do
  * mecanismo existente, não só a mecânica de rotação/detecção de reuso. */
 export const USER_REFRESH_TOKEN_TTL_DAYS = 30;
-
-/**
- * Nunca corresponde a um User.id real (cuid) — usado só pra manter o número de round-trips
- * ao banco igual em `requestOtp`, independente de o CPF já existir ou não. Sem isso, a
- * ausência da query extra de Membership vaza "esse CPF existe?" por diferença de timing
- * mesmo nos dois cenários que devolvem a mesma resposta HTTP.
- */
-export const NON_EXISTENT_USER_ID_PLACEHOLDER = 'signup-otp-timing-guard-placeholder';

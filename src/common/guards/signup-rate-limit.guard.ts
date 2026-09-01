@@ -10,9 +10,9 @@ const MAX_ATTEMPTS = 5;
 
 /**
  * 5 tentativas/min por IP e por CPF (chave = cpfHash, nunca o CPF em claro), sliding window
- * simples — mesmo padrão do LoginRateLimitGuard. Sem isso, o 409 MEMBERSHIP_ALREADY_EXISTS
- * (aceito como vazamento conhecido: CPF não é segredo) ficaria barato de explorar em massa, e
- * o endpoint viraria vetor de spam de e-mail (cada requisição dispara um OTP).
+ * simples — mesmo padrão do LoginRateLimitGuard. Sem isso, o 404 CPF_NOT_INVITED (aceito como
+ * vazamento conhecido: CPF não é segredo) ficaria barato de explorar em massa, e o endpoint
+ * viraria vetor de spam de e-mail (cada requisição bem-sucedida dispara um OTP).
  */
 @Injectable()
 export class SignupRateLimitGuard implements CanActivate {
