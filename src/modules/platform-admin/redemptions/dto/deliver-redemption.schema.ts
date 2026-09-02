@@ -8,7 +8,7 @@ export const deliverRedemptionSchema = z
     redemptionId: z.string().min(1).optional(),
     pickupCode: z
       .string()
-      .regex(/^[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{6}$/, 'Código de retirada inválido.')
+      .regex(/^\d{6}$/, 'Código de retirada inválido.')
       .optional(),
     qrPayload: z.string().min(1).optional(),
   })

@@ -1,7 +1,7 @@
 import { randomInt } from 'node:crypto';
 
-/** Alfabeto sem ambiguidade visual: sem O/0 e I/1 (24 letras + 8 dígitos = 32 símbolos). */
-const PICKUP_CODE_ALPHABET = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ';
+/** Só dígitos — sem letra misturada não existe ambiguidade O/0 ou I/1 pra evitar. */
+const PICKUP_CODE_ALPHABET = '0123456789';
 const PICKUP_CODE_LENGTH = 6;
 
 /** Código de retirada curto e legível — o cliente apresenta na entrega (o QR cobre o fluxo

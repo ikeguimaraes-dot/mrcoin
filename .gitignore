@@ -12,6 +12,7 @@ openapi.json
 .env.*.local
 key
 platform-admin-password-reset-*.txt
+partner-password-reset-*.txt
 
 # logs
 *.log

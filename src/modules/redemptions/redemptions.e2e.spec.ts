@@ -12,7 +12,7 @@ import { hashPassword } from '../auth/password.util';
 import { DEFAULT_COINS_PER_REAL_SCALED } from '../settings/settings.constants';
 import { PARTNER_REDEMPTION_CONFIRM_ALLOWED_FIELDS } from './dto/partner-redemption-confirm-response.schema';
 
-const PICKUP_CODE_REGEX = /^[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{6}$/;
+const PICKUP_CODE_REGEX = /^\d{6}$/;
 const DEFAULT_TEST_PIN = '8264';
 
 interface RedemptionBody {
