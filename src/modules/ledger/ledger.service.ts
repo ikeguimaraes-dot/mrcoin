@@ -32,6 +32,17 @@ interface EntryCoreInput {
   reversalOfId: string | null;
 }
 
+export interface TransferBetweenWalletsInput {
+  fromWalletId: string;
+  toWalletId: string;
+  amount: number;
+  referenceId: string;
+  debitDescription: string;
+  creditDescription: string;
+  debitIdempotencyKey: string;
+  creditIdempotencyKey: string;
+}
+
 /** Sinaliza conflito de optimistic lock para o loop de retry. Nunca escapa do service. */
 class LedgerVersionConflictError extends Error {
   constructor() {
@@ -100,6 +111,82 @@ export class LedgerService {
       },
       tx,
     );
+  }
+
+  /**
+   * Move coins entre duas wallets atomicamente — DEBIT numa, CREDIT na outra, na MESMA
+   * `$transaction`, com o próprio retry-on-conflito-de-versão (mesmo espírito de
+   * `executeWithRetry`, adaptado pra duas wallets). `post()` sozinho não serve aqui: quando
+   * chamado com `tx` externo ele pula o retry (fica a cargo de quem compôs a transação), e
+   * não dá pra reaproveitar `executeWithRetry` porque ele assume uma wallet só. Único
+   * chamador esperado: TransferService — por isso não faz a checagem de replay-mismatch
+   * mais rígida que `post()` faz pra chamadores arbitrários (`assertIdempotentReplayMatches`).
+   */
+  async transferBetweenWallets(
+    input: TransferBetweenWalletsInput,
+    attempt = 1,
+  ): Promise<{ debitEntry: LedgerEntry; creditEntry: LedgerEntry }> {
+    const [existingDebit, existingCredit] = await Promise.all([
+      this.prisma.ledgerEntry.findUnique({ where: { idempotencyKey: input.debitIdempotencyKey } }),
+      this.prisma.ledgerEntry.findUnique({ where: { idempotencyKey: input.creditIdempotencyKey } }),
+    ]);
+    if (existingDebit && existingCredit) {
+      return { debitEntry: existingDebit, creditEntry: existingCredit };
+    }
+
+    try {
+      return await this.prisma.$transaction((tx) => this.executeTransferEntries(tx, input));
+    } catch (error) {
+      if (error instanceof LedgerVersionConflictError) {
+        if (attempt >= MAX_RETRIES) {
+          throw new LedgerConcurrencyException(input.fromWalletId, attempt);
+        }
+        return this.transferBetweenWallets(input, attempt + 1);
+      }
+
+      if (this.isIdempotencyKeyUniqueViolation(error)) {
+        const [debitEntry, creditEntry] = await Promise.all([
+          this.prisma.ledgerEntry.findUniqueOrThrow({ where: { idempotencyKey: input.debitIdempotencyKey } }),
+          this.prisma.ledgerEntry.findUniqueOrThrow({ where: { idempotencyKey: input.creditIdempotencyKey } }),
+        ]);
+        return { debitEntry, creditEntry };
+      }
+
+      throw error;
+    }
+  }
+
+  private async executeTransferEntries(
+    tx: TransactionClient,
+    input: TransferBetweenWalletsInput,
+  ): Promise<{ debitEntry: LedgerEntry; creditEntry: LedgerEntry }> {
+    const debitEntry = await this.executeEntry(tx, {
+      walletId: input.fromWalletId,
+      type: 'DEBIT',
+      delta: -input.amount,
+      amount: input.amount,
+      referenceType: 'TRANSFER',
+      referenceId: input.referenceId,
+      description: input.debitDescription,
+      batchId: null,
+      distributionItemId: null,
+      idempotencyKey: input.debitIdempotencyKey,
+      reversalOfId: null,
+    });
+    const creditEntry = await this.executeEntry(tx, {
+      walletId: input.toWalletId,
+      type: 'CREDIT',
+      delta: input.amount,
+      amount: input.amount,
+      referenceType: 'TRANSFER',
+      referenceId: input.referenceId,
+      description: input.creditDescription,
+      batchId: null,
+      distributionItemId: null,
+      idempotencyKey: input.creditIdempotencyKey,
+      reversalOfId: null,
+    });
+    return { debitEntry, creditEntry };
   }
 
   async getBalance(

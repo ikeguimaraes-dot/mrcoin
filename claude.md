@@ -112,7 +112,7 @@ Sem Docker. Banco é gerenciado na nuvem (Neon) em todos os ambientes. Redis rod
 
 - Não dar acesso ao banco a nenhum outro serviço. Quem precisa de dado, consome esta API.
 - Não criar endpoint que edite saldo, entries ou resgates confirmados.
-- Não permitir saque, transferência entre usuários ou conversão de coins em dinheiro — o circuito fechado é a fronteira regulatória do produto (evita configurar arranjo de pagamento sob o Banco Central).
+- Transferência de coins é permitida APENAS entre membros da MESMA organização, com limite de 1000 coins por dia por usuário. Transferência entre organizações diferentes, saque ou conversão em dinheiro continuam proibidos.
 - Não adicionar blockchain, microserviços ou tecnologia nova sem discussão. A arquitetura é um monólito modular intencional.
 - Não usar `any`; não desabilitar regra de lint sem justificativa em comentário.
 - Não processar CSV ou disparos em massa dentro do request.

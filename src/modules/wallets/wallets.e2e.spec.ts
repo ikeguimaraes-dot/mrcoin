@@ -295,6 +295,55 @@ describe('totalEarned/totalSpent', () => {
     expect(body.totalEarned - body.totalSpent).toBeGreaterThan(body.cachedBalance);
     expect(body.totalEarned - body.totalSpent - body.cachedBalance).toBe(100);
   });
+
+  it('TRANSFER (enviada ou recebida) não conta em nenhum dos dois — só mede a relação com a empresa, não entre colegas', async () => {
+    const org = await createOrg();
+    const { userId, walletId } = await createUserWithWallet(org.id);
+    const token = await tokenFor(userId);
+
+    await ledgerService.post({
+      walletId,
+      type: 'CREDIT',
+      amount: 1000,
+      referenceType: 'DISTRIBUTION',
+      referenceId: randomUUID(),
+      description: 'Distribuição',
+      idempotencyKey: randomUUID(),
+    });
+    // CREDIT via TRANSFER (recebida de um colega) — não deve inflar totalEarned.
+    await ledgerService.post({
+      walletId,
+      type: 'CREDIT',
+      amount: 400,
+      referenceType: 'TRANSFER',
+      referenceId: randomUUID(),
+      description: 'Transferência recebida',
+      idempotencyKey: randomUUID(),
+    });
+    // DEBIT via TRANSFER (enviada a um colega) — não deve inflar totalSpent.
+    await ledgerService.post({
+      walletId,
+      type: 'DEBIT',
+      amount: 250,
+      referenceType: 'TRANSFER',
+      referenceId: randomUUID(),
+      description: 'Transferência enviada',
+      idempotencyKey: randomUUID(),
+    });
+
+    const res = await request(server)
+      .get('/wallet')
+      .query({ organizationId: org.id })
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+    const body = res.body as WalletResponseBody;
+
+    expect(body.totalEarned).toBe(1000);
+    expect(body.totalSpent).toBe(0);
+    // O saldo reflete as duas movimentações de verdade (1000 + 400 - 250 = 1150), só os
+    // totais vitalícios é que ignoram TRANSFER.
+    expect(body.cachedBalance).toBe(1150);
+  });
 });
 
 describe('GET /wallet/entries', () => {

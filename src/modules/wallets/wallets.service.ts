@@ -32,6 +32,10 @@ export interface WalletSummary {
  * houve resgate) e não retroage sobre "quanto entrou historicamente" — por isso
  * `totalEarned - totalSpent` pode ficar maior que `cachedBalance` depois de uma expiração;
  * a diferença é exatamente o total expirado, que não é exposto aqui (não foi pedido).
+ *
+ * TRANSFER (enviada ou recebida) também fica de fora dos dois — os dois campos medem o
+ * relacionamento do usuário com a empresa (quanto ela distribuiu, quanto ele resgatou nos
+ * parceiros), não o movimento entre colegas da mesma organização.
  */
 @Injectable()
 export class WalletsService {
@@ -115,10 +119,13 @@ export class WalletsService {
 
   private async getLifetimeTotals(walletId: string): Promise<{ totalEarned: number; totalSpent: number }> {
     const [creditAgg, creditReversalAgg, redemptionDebitAgg, redemptionReversalAgg] = await Promise.all([
-      this.prisma.ledgerEntry.aggregate({ _sum: { amount: true }, where: { walletId, type: 'CREDIT' } }),
       this.prisma.ledgerEntry.aggregate({
         _sum: { amount: true },
-        where: { walletId, type: 'REVERSAL', reversalOf: { type: 'CREDIT' } },
+        where: { walletId, type: 'CREDIT', referenceType: { not: 'TRANSFER' } },
+      }),
+      this.prisma.ledgerEntry.aggregate({
+        _sum: { amount: true },
+        where: { walletId, type: 'REVERSAL', reversalOf: { type: 'CREDIT', referenceType: { not: 'TRANSFER' } } },
       }),
       this.prisma.ledgerEntry.aggregate({
         _sum: { amount: true },

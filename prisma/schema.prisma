@@ -67,6 +67,7 @@ enum LedgerReferenceType {
   CAMPAIGN
   MANUAL_ADJUSTMENT
   REVERSAL
+  TRANSFER
 }
 
 enum DistributionStatus {
@@ -332,6 +333,8 @@ model Membership {
   wallet            Wallet?
   distributionItems DistributionItem[]
   redemptions       Redemption[]
+  sentTransfers     Transfer[]         @relation("TransferSender")
+  receivedTransfers Transfer[]         @relation("TransferRecipient")
 
   @@unique([userId, organizationId])
   @@index([organizationId])
@@ -637,6 +640,27 @@ model Redemption {
   updatedAt       DateTime         @updatedAt
 
   @@index([partnerId, status])
+}
+
+/// Transferência de coins entre dois membros da MESMA organização (produto validado
+/// juridicamente — ver CLAUDE.md "O que NÃO fazer"). Tabela própria (mesmo padrão de
+/// CoinBatch/Distribution/Redemption) em vez de inferir do LedgerEntry — sustenta a
+/// checagem do limite diário (@@index([fromMembershipId, createdAt])) sem varrer a maior
+/// tabela do banco. debitLedgerEntryId/creditLedgerEntryId apontam pras duas entries
+/// criadas atomicamente por LedgerService.transferBetweenWallets().
+model Transfer {
+  id                  String     @id @default(cuid())
+  fromMembershipId    String
+  fromMembership      Membership @relation("TransferSender", fields: [fromMembershipId], references: [id])
+  toMembershipId      String
+  toMembership        Membership @relation("TransferRecipient", fields: [toMembershipId], references: [id])
+  amount              Int
+  idempotencyKey      String     @unique
+  debitLedgerEntryId  String?
+  creditLedgerEntryId String?
+  createdAt           DateTime   @default(now())
+
+  @@index([fromMembershipId, createdAt])
 }
 
 /// Fechamento periódico (semanal) dos resgates confirmados de um parceiro,
