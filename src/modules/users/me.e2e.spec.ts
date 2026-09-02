@@ -14,6 +14,11 @@ interface MeResponseBody {
   email: string | null;
   cpfMasked: string;
   notificationsEnabled: boolean;
+  hasTransactionPin: boolean;
+}
+
+interface ErrorBody {
+  code: string;
 }
 
 const prisma = new PrismaService();
@@ -74,6 +79,7 @@ describe('GET /users/me', () => {
     expect(Object.keys(response.body as object).sort()).toEqual([
       'cpfMasked',
       'email',
+      'hasTransactionPin',
       'id',
       'name',
       'notificationsEnabled',
@@ -83,8 +89,10 @@ describe('GET /users/me', () => {
     expect(body.id).toBe(userId);
     expect(body.cpfMasked).toBe(`${cpf.slice(0, 3)}..-${cpf.slice(-2)}`);
     expect(body.notificationsEnabled).toBe(true);
+    expect(body.hasTransactionPin).toBe(false);
     expect(response.body).not.toHaveProperty('cpfEncrypted');
     expect(response.body).not.toHaveProperty('cpfHash');
+    expect(response.body).not.toHaveProperty('transactionPinHash');
   });
 
   it('email null (conta sem contato verificado) aparece como null, não como erro', async () => {
@@ -100,5 +108,75 @@ describe('GET /users/me', () => {
 
   it('sem token de autenticação retorna 401', async () => {
     await request(server).get('/users/me').expect(401);
+  });
+});
+
+describe('POST /users/me/transaction-pin', () => {
+  it('define o PIN e hasTransactionPin passa a true em GET /users/me', async () => {
+    const { userId, token } = await createUser();
+
+    await request(server)
+      .post('/users/me/transaction-pin')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ pin: '8264' })
+      .expect(200);
+
+    const user = await prisma.user.findUniqueOrThrow({ where: { id: userId } });
+    expect(user.transactionPinHash).toBeTruthy();
+
+    const meRes = await request(server).get('/users/me').set('Authorization', `Bearer ${token}`).expect(200);
+    expect((meRes.body as MeResponseBody).hasTransactionPin).toBe(true);
+  });
+
+  it('trocar o PIN sobrescreve o hash anterior', async () => {
+    const { userId, token } = await createUser();
+
+    await request(server)
+      .post('/users/me/transaction-pin')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ pin: '8264' })
+      .expect(200);
+    const firstHash = (await prisma.user.findUniqueOrThrow({ where: { id: userId } })).transactionPinHash;
+
+    await request(server)
+      .post('/users/me/transaction-pin')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ pin: '3179' })
+      .expect(200);
+    const secondHash = (await prisma.user.findUniqueOrThrow({ where: { id: userId } })).transactionPinHash;
+
+    expect(secondHash).not.toBe(firstHash);
+  });
+
+  it.each([
+    ['1111', 'dígito repetido'],
+    ['0000', 'dígito repetido'],
+    ['1234', 'sequência ascendente'],
+    ['4321', 'sequência descendente'],
+    ['123456', 'sequência ascendente de 6'],
+  ])('rejeita PIN trivial %s (%s)', async (pin) => {
+    const { token } = await createUser();
+
+    const response = await request(server)
+      .post('/users/me/transaction-pin')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ pin })
+      .expect(400);
+    expect((response.body as ErrorBody).code).toBe('VALIDATION_ERROR');
+  });
+
+  it.each(['123', '1234567', 'abcd'])('rejeita PIN com formato inválido: %s', async (pin) => {
+    const { token } = await createUser();
+
+    const response = await request(server)
+      .post('/users/me/transaction-pin')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ pin })
+      .expect(400);
+    expect((response.body as ErrorBody).code).toBe('VALIDATION_ERROR');
+  });
+
+  it('sem token de autenticação retorna 401', async () => {
+    await request(server).post('/users/me/transaction-pin').send({ pin: '8264' }).expect(401);
   });
 });

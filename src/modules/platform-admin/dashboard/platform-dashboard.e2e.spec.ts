@@ -178,6 +178,7 @@ async function createConfirmedRedemption(params: {
   partnerId: string;
   offerId?: string;
   amount: number;
+  status?: 'CONFIRMED' | 'DELIVERED';
 }) {
   const suffix = randomUUID();
   return prisma.redemption.create({
@@ -187,11 +188,10 @@ async function createConfirmedRedemption(params: {
       partnerId: params.partnerId,
       offerId: params.offerId ?? null,
       amount: params.amount,
-      code: suffix,
+      pickupCode: suffix.replace(/-/g, '').slice(0, 6).toUpperCase(),
       qrPayload: `qr-${suffix}`,
       idempotencyKey: `test-${suffix}`,
-      status: 'CONFIRMED',
-      expiresAt: new Date(Date.now() + 60 * 60 * 1000),
+      status: params.status ?? 'CONFIRMED',
       confirmedAt: new Date(),
     },
   });
@@ -382,30 +382,41 @@ describe('GET /platform/dashboard — rankings', () => {
     expect(ranked?.coinsIssued).toBe(HUGE_AMOUNT);
   });
 
-  it('parceiro de teste aparece no topo do ranking de resgates confirmados', async () => {
+  it('parceiro de teste aparece no topo do ranking de resgates — CONFIRMED e DELIVERED contam igual', async () => {
     const { token } = await createPlatformAdminFixture();
     const org = await createOrg();
     const partner = await createPartner();
     const member = await createMemberWithWallet(org.id);
 
-    const REDEMPTION_COUNT = 15;
-    await Promise.all(
-      Array.from({ length: REDEMPTION_COUNT }, () =>
+    const CONFIRMED_COUNT = 10;
+    const DELIVERED_COUNT = 5;
+    await Promise.all([
+      ...Array.from({ length: CONFIRMED_COUNT }, () =>
         createConfirmedRedemption({
           membershipId: member.membershipId,
           walletId: member.walletId,
           partnerId: partner.id,
           amount: 10,
+          status: 'CONFIRMED',
         }),
       ),
-    );
+      ...Array.from({ length: DELIVERED_COUNT }, () =>
+        createConfirmedRedemption({
+          membershipId: member.membershipId,
+          walletId: member.walletId,
+          partnerId: partner.id,
+          amount: 10,
+          status: 'DELIVERED',
+        }),
+      ),
+    ]);
 
     const body = await getDashboard(token);
     const ranked = body.rankings.topPartnersByConfirmedRedemptions.find((r) => r.partnerId === partner.id);
     expect(ranked).toBeDefined();
     expect(ranked?.name).toBe(partner.name);
-    expect(ranked?.confirmedRedemptions).toBe(REDEMPTION_COUNT);
-    expect(ranked?.coinsRedeemed).toBe(REDEMPTION_COUNT * 10);
+    expect(ranked?.confirmedRedemptions).toBe(CONFIRMED_COUNT + DELIVERED_COUNT);
+    expect(ranked?.coinsRedeemed).toBe((CONFIRMED_COUNT + DELIVERED_COUNT) * 10);
   });
 });
 
@@ -445,6 +456,28 @@ describe('GET /platform/dashboard — atividade recente', () => {
     expect(found?.partnerName).toBe(partner.name);
     expect(found?.offerTitle).toBe(offer.title);
     expect(found?.amount).toBe(77);
+  });
+
+  it('resgate DELIVERED também aparece em latestConfirmedRedemptions — é só a continuação de um CONFIRMED', async () => {
+    const { token } = await createPlatformAdminFixture();
+    const org = await createOrg();
+    const partner = await createPartner();
+    const offer = await createOffer(partner.id);
+    const member = await createMemberWithWallet(org.id);
+
+    const redemption = await createConfirmedRedemption({
+      membershipId: member.membershipId,
+      walletId: member.walletId,
+      partnerId: partner.id,
+      offerId: offer.id,
+      amount: 55,
+      status: 'DELIVERED',
+    });
+
+    const body = await getDashboard(token);
+    const found = body.recentActivity.latestConfirmedRedemptions.find((r) => r.id === redemption.id);
+    expect(found).toBeDefined();
+    expect(found?.amount).toBe(55);
   });
 });
 

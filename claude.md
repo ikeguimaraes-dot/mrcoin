@@ -48,7 +48,7 @@ O ledger é o coração financeiro. Nunca flexibilizar:
 5. **`LedgerEntry` é imutável:** nunca UPDATE, nunca DELETE. Correção = novo entry `REVERSAL` referenciando o original.
 6. **Hash encadeado:** cada entry grava `hash = sha256(prevHash + payload canônico)`. Não remover nem simplificar.
 7. **Expiração via job diário**, FIFO por `batchId`, gerando entries `EXPIRE`. Nunca zerar saldo diretamente.
-8. **Resgate só debita na confirmação do parceiro.** Criar redemption não move coins; QR expirado não exige estorno.
+8. **Resgate é compra instantânea.** `POST /redemptions` já debita na hora (com PIN de transação validado antes do débito) e o resgate nasce `CONFIRMED` — não existe mais estado "aguardando parceiro" nem expiração. `DELIVERED` (marcado pelo parceiro ou por um platform admin) é só a confirmação de entrega física, nunca move coins.
 
 **Valores sempre em inteiros (centavos).** Float para dinheiro é proibido.
 

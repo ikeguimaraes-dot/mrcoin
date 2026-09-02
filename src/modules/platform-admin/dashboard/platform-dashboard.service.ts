@@ -167,7 +167,9 @@ export class PlatformDashboardService {
         by: ['partnerId'],
         _count: { partnerId: true },
         _sum: { amount: true },
-        where: { status: 'CONFIRMED' },
+        // DELIVERED é só uma continuação temporal de um CONFIRMED (já debitado) — conta
+        // igual pro ranking, nunca desfaz o que o CONFIRMED significou.
+        where: { status: { in: ['CONFIRMED', 'DELIVERED'] } },
         orderBy: { _count: { partnerId: 'desc' } },
         take: RANKING_LIMIT,
       }),
@@ -184,7 +186,7 @@ export class PlatformDashboardService {
         },
       }),
       this.prisma.redemption.findMany({
-        where: { status: 'CONFIRMED' },
+        where: { status: { in: ['CONFIRMED', 'DELIVERED'] } },
         orderBy: { confirmedAt: 'desc' },
         take: RECENT_ACTIVITY_LIMIT,
         select: {

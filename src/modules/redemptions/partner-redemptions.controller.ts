@@ -9,7 +9,8 @@ import { RedemptionsService } from './redemptions.service';
 import { ConfirmRedemptionDto, confirmRedemptionSchema } from './dto/confirm-redemption.schema';
 import { PartnerRedemptionConfirmResponseDto } from './dto/partner-redemption-confirm-response.schema';
 
-/** Endpoint que o portal do parceiro (coins-partner) usa pra confirmar um resgate no balcão. */
+/** Endpoint que o portal do parceiro (coins-partner) usa pra marcar um resgate como
+ * entregue no balcão — o débito já aconteceu na compra, aqui só registra a entrega física. */
 @ApiTags('redemptions')
 @Controller('redemptions')
 @UseGuards(PartnerJwtGuard, RedemptionConfirmRateLimitGuard)
@@ -17,12 +18,16 @@ export class PartnerRedemptionsController {
   constructor(private readonly redemptionsService: RedemptionsService) {}
 
   @Post('confirm')
-  @ApiOperation({ summary: 'Confirma um resgate (code OU qrPayload) — só aqui o débito acontece' })
+  @ApiOperation({
+    summary:
+      'Marca um resgate como entregue (pickupCode OU qrPayload) — idempotente, chamar de ' +
+      'novo num resgate já entregue não é erro',
+  })
   @ApiCreatedResponse({ type: PartnerRedemptionConfirmResponseDto })
   confirm(
     @CurrentPartner() partner: PartnerJwtPayload,
     @Body(new ZodValidationPipe(confirmRedemptionSchema)) body: ConfirmRedemptionDto,
   ) {
-    return this.redemptionsService.confirmForPartner(partner.sub, body);
+    return this.redemptionsService.deliverForPartner(partner.sub, body);
   }
 }

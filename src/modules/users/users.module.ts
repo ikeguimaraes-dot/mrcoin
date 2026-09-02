@@ -11,6 +11,7 @@ import { RefreshController } from './refresh.controller';
 import { UserTokenService } from './user-token.service';
 import { MeController } from './me.controller';
 import { MeService } from './me.service';
+import { TransactionPinService } from './transaction-pin.service';
 
 @Module({
   controllers: [
@@ -21,6 +22,15 @@ import { MeService } from './me.service';
     RefreshController,
     MeController,
   ],
-  providers: [SignupService, LoginService, DevicesService, NotificationPreferencesService, UserTokenService, MeService],
+  providers: [
+    SignupService,
+    LoginService,
+    DevicesService,
+    NotificationPreferencesService,
+    UserTokenService,
+    MeService,
+    TransactionPinService,
+  ],
+  exports: [TransactionPinService],
 })
 export class UsersModule {}

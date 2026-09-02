@@ -1,9 +1,9 @@
-import { RedemptionStatus } from '@prisma/client';
 import { createZodDto } from 'nestjs-zod';
 import { z } from 'zod';
 
 /**
- * Resposta de POST /redemptions/confirm pro portal do parceiro — shape deliberadamente
+ * Resposta de POST /redemptions/confirm pro portal do parceiro — hoje "marcar entregue",
+ * não mais "aprovar e debitar" (o débito já aconteceu na compra). Shape deliberadamente
  * diferente do SafeRedemption que o app usa (redemption-response.schema.ts). O atendente
  * precisa ver "qual oferta, quanto, pra quem" (CLAUDE.md do coins-partner), mas NUNCA cpf,
  * e-mail, telefone ou sobrenome do cliente — só o suficiente pra conferir que é a pessoa
@@ -15,8 +15,9 @@ import { z } from 'zod';
 export const partnerRedemptionConfirmResponseSchema = z.object({
   id: z.string(),
   amount: z.number().int(),
-  status: z.nativeEnum(RedemptionStatus),
+  status: z.enum(['CONFIRMED', 'DELIVERED']),
   confirmedAt: z.string().datetime().nullable(),
+  deliveredAt: z.string().datetime().nullable(),
   offerTitle: z.string().nullable(),
   customerFirstName: z.string(),
 });

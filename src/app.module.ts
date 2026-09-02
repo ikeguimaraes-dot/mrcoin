@@ -19,6 +19,7 @@ import { PlatformOrganizationsModule } from './modules/platform-admin/organizati
 import { PlatformPartnersModule } from './modules/platform-admin/partners/platform-partners.module';
 import { PlatformOffersModule } from './modules/platform-admin/offers/platform-offers.module';
 import { PlatformDashboardModule } from './modules/platform-admin/dashboard/platform-dashboard.module';
+import { PlatformRedemptionsModule } from './modules/platform-admin/redemptions/platform-redemptions.module';
 import { OrganizationsModule } from './modules/organizations/organizations.module';
 import { UsersModule } from './modules/users/users.module';
 import { WalletsModule } from './modules/wallets/wallets.module';
@@ -67,6 +68,7 @@ import { RedemptionsModule } from './modules/redemptions/redemptions.module';
     PlatformPartnersModule,
     PlatformOffersModule,
     PlatformDashboardModule,
+    PlatformRedemptionsModule,
     OrganizationsModule,
     UsersModule,
     WalletsModule,

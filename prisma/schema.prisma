@@ -99,10 +99,21 @@ enum OfferStatus {
   INACTIVE
 }
 
+/// PENDING/EXPIRED nunca mais são escritos pela aplicação (resgate virou compra instantânea
+/// — ver RedemptionsService) — ficam no tipo só porque o Postgres não permite DROP VALUE de
+/// enum sem recriar o tipo inteiro, e não vale o risco pra remediar a única linha órfã que
+/// existe em produção (nunca debitou nada). CONFIRMED nasce já com o débito feito;
+/// DELIVERED é só a marcação de entrega física, sem efeito financeiro.
 enum RedemptionStatus {
   PENDING
   CONFIRMED
   EXPIRED
+  DELIVERED
+}
+
+enum DeliveredByType {
+  PARTNER
+  PLATFORM_ADMIN
 }
 
 enum SettlementStatus {
@@ -257,6 +268,10 @@ model User {
   email                String?
   status               UserStatus @default(ACTIVE)
   notificationsEnabled Boolean    @default(true)
+  /// Hash argon2id (hashPassword/verifyPassword, mesma função de senha) do PIN de 4-6
+  /// dígitos exigido em POST /redemptions. Nulo = usuário ainda não configurou (ver
+  /// hasTransactionPin em GET /users/me).
+  transactionPinHash   String?
   createdAt            DateTime   @default(now())
   updatedAt            DateTime   @updatedAt
 
@@ -594,28 +609,33 @@ model Offer {
 /// o débito só acontece na confirmação (`ledgerEntryId` setado nesse momento).
 /// idempotencyKey: mesmo padrão de CoinBatch/Distribution — POST /redemptions com a mesma
 /// chave e os mesmos parâmetros devolve o resgate já criado, nunca duplica.
+/// Resgate é compra instantânea (ver RedemptionsService.create()) — nasce já CONFIRMED, com
+/// o débito já feito no ledger. deliveredAt/deliveredByType/deliveredById registram só a
+/// entrega física (marcada pelo Partner dono ou por um PlatformAdmin), sem efeito
+/// financeiro nenhum — nunca mexem em coins.
 model Redemption {
-  id             String           @id @default(cuid())
-  membershipId   String
-  membership     Membership       @relation(fields: [membershipId], references: [id])
-  walletId       String
-  wallet         Wallet           @relation(fields: [walletId], references: [id])
-  partnerId      String
-  partner        Partner          @relation(fields: [partnerId], references: [id])
-  offerId        String?
-  offer          Offer?           @relation(fields: [offerId], references: [id])
-  amount         Int
-  code           String           @unique
-  qrPayload      String           @unique
-  idempotencyKey String           @unique
-  status         RedemptionStatus @default(PENDING)
-  expiresAt      DateTime
-  confirmedAt    DateTime?
-  ledgerEntryId  String?
-  createdAt      DateTime         @default(now())
-  updatedAt      DateTime         @updatedAt
+  id              String           @id @default(cuid())
+  membershipId    String
+  membership      Membership       @relation(fields: [membershipId], references: [id])
+  walletId        String
+  wallet          Wallet           @relation(fields: [walletId], references: [id])
+  partnerId       String
+  partner         Partner          @relation(fields: [partnerId], references: [id])
+  offerId         String?
+  offer           Offer?           @relation(fields: [offerId], references: [id])
+  amount          Int
+  pickupCode      String           @unique
+  qrPayload       String           @unique
+  idempotencyKey  String           @unique
+  status          RedemptionStatus
+  confirmedAt     DateTime?
+  ledgerEntryId   String?
+  deliveredAt     DateTime?
+  deliveredByType DeliveredByType?
+  deliveredById   String?
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
 
-  @@index([status, expiresAt])
   @@index([partnerId, status])
 }
 

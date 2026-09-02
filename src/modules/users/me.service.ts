@@ -8,6 +8,7 @@ export interface MeResponse {
   email: string | null;
   cpfMasked: string;
   notificationsEnabled: boolean;
+  hasTransactionPin: boolean;
 }
 
 @Injectable()
@@ -17,7 +18,14 @@ export class MeService {
   async getMe(userId: string): Promise<MeResponse> {
     const user = await this.prisma.user.findUniqueOrThrow({
       where: { id: userId },
-      select: { id: true, name: true, email: true, cpfEncrypted: true, notificationsEnabled: true },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        cpfEncrypted: true,
+        notificationsEnabled: true,
+        transactionPinHash: true,
+      },
     });
 
     return {
@@ -26,6 +34,7 @@ export class MeService {
       email: user.email,
       cpfMasked: maskCpf(decryptCpf(user.cpfEncrypted)),
       notificationsEnabled: user.notificationsEnabled,
+      hasTransactionPin: user.transactionPinHash !== null,
     };
   }
 }

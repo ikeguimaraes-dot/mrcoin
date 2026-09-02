@@ -26,7 +26,11 @@ export class RedemptionsController {
 
   @Post()
   @ApiHeader({ name: 'Idempotency-Key', required: true })
-  @ApiOperation({ summary: 'Cria um resgate PENDING (código + QR, TTL 5min) — nada é debitado ainda' })
+  @ApiOperation({
+    summary:
+      'Compra um item com coins — exige PIN de transação, debita imediatamente e devolve o ' +
+      'resgate já CONFIRMED com código de retirada + QR',
+  })
   @ApiCreatedResponse({ type: RedemptionResponseDto })
   create(
     @CurrentUser() user: UserJwtPayload,
@@ -37,7 +41,7 @@ export class RedemptionsController {
   }
 
   @Get(':id')
-  @ApiOperation({ summary: 'Consulta um resgate — usado pelo app pra polling aguardando confirmação' })
+  @ApiOperation({ summary: 'Consulta um resgate já feito — código de retirada, QR e status de entrega' })
   @ApiOkResponse({ type: RedemptionResponseDto })
   getById(@CurrentUser() user: UserJwtPayload, @Param('id') id: string) {
     return this.redemptionsService.getById(user.sub, id);

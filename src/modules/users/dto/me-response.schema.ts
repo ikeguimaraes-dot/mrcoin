@@ -7,5 +7,6 @@ export const meResponseSchema = z.object({
   email: z.string().nullable(),
   cpfMasked: z.string(),
   notificationsEnabled: z.boolean(),
+  hasTransactionPin: z.boolean(),
 });
 export class MeResponseDto extends createZodDto(meResponseSchema) {}

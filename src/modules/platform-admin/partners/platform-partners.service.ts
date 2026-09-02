@@ -166,7 +166,8 @@ export class PlatformPartnersService {
   private async toSummary(partner: SafePartnerPlatform): Promise<PartnerSummary> {
     const [offerCount, confirmedRedemptionCount] = await Promise.all([
       this.prisma.offer.count({ where: { partnerId: partner.id } }),
-      this.prisma.redemption.count({ where: { partnerId: partner.id, status: 'CONFIRMED' } }),
+      // DELIVERED é uma continuação de um CONFIRMED (já debitado) — conta igual.
+      this.prisma.redemption.count({ where: { partnerId: partner.id, status: { in: ['CONFIRMED', 'DELIVERED'] } } }),
     ]);
 
     return { ...partner, offerCount, confirmedRedemptionCount };
