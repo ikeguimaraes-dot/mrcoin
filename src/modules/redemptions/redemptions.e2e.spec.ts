@@ -42,6 +42,24 @@ interface PartnerConfirmBody {
   customerFirstName: string;
 }
 
+interface RedemptionListItemBody {
+  id: string;
+  status: string;
+  pickupCode: string;
+  qrPayload: string;
+  amount: number;
+  createdAt: string;
+  confirmedAt: string | null;
+  deliveredAt: string | null;
+  offerTitle: string | null;
+  partnerName: string;
+}
+
+interface RedemptionListResponseBody {
+  items: RedemptionListItemBody[];
+  nextCursor: string | null;
+}
+
 const prisma = new PrismaService();
 const jwtService = new JwtService({ secret: process.env.JWT_ACCESS_SECRET });
 
@@ -97,7 +115,7 @@ async function createUserWithWallet(
   return { userId: user.id, membershipId: membership.id, walletId: wallet.id, token };
 }
 
-async function createPartner(status: PartnerStatus = 'ACTIVE'): Promise<{ id: string; token: string }> {
+async function createPartner(status: PartnerStatus = 'ACTIVE'): Promise<{ id: string; name: string; token: string }> {
   const suffix = randomUUID();
   const partner = await prisma.partner.create({
     data: {
@@ -111,7 +129,7 @@ async function createPartner(status: PartnerStatus = 'ACTIVE'): Promise<{ id: st
   });
   createdPartnerIds.push(partner.id);
   const token = await jwtService.signAsync({ sub: partner.id, type: 'partner' });
-  return { id: partner.id, token };
+  return { id: partner.id, name: partner.name, token };
 }
 
 async function createOffer(
@@ -700,7 +718,7 @@ describe('Validações e autenticação', () => {
   });
 
   it('POST /redemptions/confirm sem token de parceiro retorna 401', async () => {
-    await request(server).post('/redemptions/confirm').send({ pickupCode: 'ABCDEF' }).expect(401);
+    await request(server).post('/redemptions/confirm').send({ pickupCode: '123456' }).expect(401);
   });
 
   it('confirm com pickupCode e qrPayload juntos retorna 400 VALIDATION_ERROR', async () => {
@@ -709,7 +727,7 @@ describe('Validações e autenticação', () => {
     const response = await request(server)
       .post('/redemptions/confirm')
       .set('Authorization', `Bearer ${partner.token}`)
-      .send({ pickupCode: 'ABCDEF', qrPayload: 'x' })
+      .send({ pickupCode: '123456', qrPayload: 'x' })
       .expect(400);
     expect((response.body as ErrorBody).code).toBe('VALIDATION_ERROR');
   });
@@ -723,5 +741,127 @@ describe('Validações e autenticação', () => {
       .send({})
       .expect(400);
     expect((response.body as ErrorBody).code).toBe('VALIDATION_ERROR');
+  });
+});
+
+describe('GET /redemptions — lista paginada', () => {
+  it('isola por usuário — cada um só vê os próprios resgates', async () => {
+    const org = await createOrg();
+    const partner = await createPartner();
+    const offer = await createOffer(partner.id, { costInCoins: 10 });
+    const userA = await createUserWithWallet(org.id, 100);
+    const userB = await createUserWithWallet(org.id, 100);
+
+    const createdA = await request(server)
+      .post('/redemptions')
+      .set('Authorization', `Bearer ${userA.token}`)
+      .set('Idempotency-Key', idempotencyKey())
+      .send(buyBody(offer.id, org.id))
+      .expect(201);
+
+    const listA = await request(server)
+      .get('/redemptions')
+      .query({ organizationId: org.id })
+      .set('Authorization', `Bearer ${userA.token}`)
+      .expect(200);
+    const bodyA = listA.body as RedemptionListResponseBody;
+    expect(bodyA.items).toHaveLength(1);
+    expect(bodyA.items[0]?.id).toBe((createdA.body as RedemptionBody).id);
+
+    const listB = await request(server)
+      .get('/redemptions')
+      .query({ organizationId: org.id })
+      .set('Authorization', `Bearer ${userB.token}`)
+      .expect(200);
+    expect((listB.body as RedemptionListResponseBody).items).toHaveLength(0);
+  });
+
+  it('shape do item: campos certos, offerTitle/partnerName resolvidos, nada de membershipId/walletId/partnerId/offerId', async () => {
+    const org = await createOrg();
+    const partner = await createPartner();
+    const offer = await createOffer(partner.id, { costInCoins: 20 });
+    const user = await createUserWithWallet(org.id, 100);
+
+    await request(server)
+      .post('/redemptions')
+      .set('Authorization', `Bearer ${user.token}`)
+      .set('Idempotency-Key', idempotencyKey())
+      .send(buyBody(offer.id, org.id))
+      .expect(201);
+
+    const listRes = await request(server)
+      .get('/redemptions')
+      .query({ organizationId: org.id })
+      .set('Authorization', `Bearer ${user.token}`)
+      .expect(200);
+    const item = (listRes.body as RedemptionListResponseBody).items[0];
+    expect(item).toBeDefined();
+    expect(Object.keys(item as object).sort()).toEqual(
+      [
+        'amount',
+        'confirmedAt',
+        'createdAt',
+        'deliveredAt',
+        'id',
+        'offerTitle',
+        'partnerName',
+        'pickupCode',
+        'qrPayload',
+        'status',
+      ].sort(),
+    );
+    expect(item?.offerTitle).toContain('Redemption Test Offer');
+    expect(item?.partnerName).toBe(partner.name);
+    expect(item?.amount).toBe(20);
+    expect(item?.status).toBe('CONFIRMED');
+    expect(item?.pickupCode).toMatch(PICKUP_CODE_REGEX);
+    expect(item).not.toHaveProperty('membershipId');
+    expect(item).not.toHaveProperty('walletId');
+    expect(item).not.toHaveProperty('partnerId');
+    expect(item).not.toHaveProperty('offerId');
+  });
+
+  it('pagina por cursor — sem repetir nem pular itens, nextCursor null na última página', async () => {
+    const org = await createOrg();
+    const partner = await createPartner();
+    const offer = await createOffer(partner.id, { costInCoins: 10 });
+    const user = await createUserWithWallet(org.id, 100);
+
+    const createdIds: string[] = [];
+    for (let i = 0; i < 3; i += 1) {
+      const res = await request(server)
+        .post('/redemptions')
+        .set('Authorization', `Bearer ${user.token}`)
+        .set('Idempotency-Key', idempotencyKey())
+        .send(buyBody(offer.id, org.id))
+        .expect(201);
+      createdIds.push((res.body as RedemptionBody).id);
+    }
+    // Mais recente primeiro (orderBy createdAt desc).
+    const expectedOrder = [...createdIds].reverse();
+
+    const firstPage = await request(server)
+      .get('/redemptions')
+      .query({ organizationId: org.id, limit: 2 })
+      .set('Authorization', `Bearer ${user.token}`)
+      .expect(200);
+    const firstBody = firstPage.body as RedemptionListResponseBody;
+    expect(firstBody.items).toHaveLength(2);
+    expect(firstBody.items.map((i) => i.id)).toEqual(expectedOrder.slice(0, 2));
+    expect(firstBody.nextCursor).toBeTruthy();
+
+    const secondPage = await request(server)
+      .get('/redemptions')
+      .query({ organizationId: org.id, limit: 2, cursor: firstBody.nextCursor as string })
+      .set('Authorization', `Bearer ${user.token}`)
+      .expect(200);
+    const secondBody = secondPage.body as RedemptionListResponseBody;
+    expect(secondBody.items).toHaveLength(1);
+    expect(secondBody.items.map((i) => i.id)).toEqual(expectedOrder.slice(2, 3));
+    expect(secondBody.nextCursor).toBeNull();
+  });
+
+  it('sem token retorna 401', async () => {
+    await request(server).get('/redemptions').query({ organizationId: 'x' }).expect(401);
   });
 });

@@ -21,6 +21,19 @@ import { extractFirstName } from './partner-redemption.util';
 
 const UNIQUE_CONSTRAINT_ERROR_CODE = 'P2002';
 
+export interface RedemptionListItem {
+  id: string;
+  status: 'CONFIRMED' | 'DELIVERED';
+  pickupCode: string;
+  qrPayload: string;
+  amount: number;
+  createdAt: Date;
+  confirmedAt: Date | null;
+  deliveredAt: Date | null;
+  offerTitle: string | null;
+  partnerName: string;
+}
+
 /**
  * Resgate é compra instantânea (regra do produto — ver plano da Sessão 22): `create()` já
  * debita, com PIN de transação validado antes do débito. Não existe mais estado "aguardando
@@ -140,6 +153,54 @@ export class RedemptionsService {
     }
 
     throw new Error('Não foi possível gerar um código de retirada único após múltiplas tentativas.');
+  }
+
+  /** Lista os resgates do usuário numa organização, paginado por cursor. Uma query só —
+   * offer/partner via `select` de relação viram JOIN, não N+1. */
+  async list(
+    userId: string,
+    organizationId: string,
+    options?: { cursor?: string; limit?: number },
+  ): Promise<{ items: RedemptionListItem[]; nextCursor: string | null }> {
+    const { membershipId } = await this.walletsService.resolveWalletId(userId, organizationId);
+    const limit = options?.limit ?? 20;
+
+    const rows = await this.prisma.redemption.findMany({
+      where: { membershipId },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      take: limit + 1,
+      ...(options?.cursor ? { cursor: { id: options.cursor }, skip: 1 } : {}),
+      select: {
+        id: true,
+        status: true,
+        pickupCode: true,
+        qrPayload: true,
+        amount: true,
+        createdAt: true,
+        confirmedAt: true,
+        deliveredAt: true,
+        offer: { select: { title: true } },
+        partner: { select: { name: true } },
+      },
+    });
+
+    const hasMore = rows.length > limit;
+    const page = hasMore ? rows.slice(0, limit) : rows;
+    const items = page.map((row) => ({
+      id: row.id,
+      status: row.status as 'CONFIRMED' | 'DELIVERED',
+      pickupCode: row.pickupCode,
+      qrPayload: row.qrPayload,
+      amount: row.amount,
+      createdAt: row.createdAt,
+      confirmedAt: row.confirmedAt,
+      deliveredAt: row.deliveredAt,
+      offerTitle: row.offer?.title ?? null,
+      partnerName: row.partner.name,
+    }));
+    const last = page[page.length - 1];
+
+    return { items, nextCursor: hasMore && last ? last.id : null };
   }
 
   async getById(userId: string, id: string): Promise<SafeRedemption> {

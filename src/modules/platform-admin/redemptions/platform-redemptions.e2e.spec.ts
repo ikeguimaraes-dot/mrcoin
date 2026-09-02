@@ -247,7 +247,7 @@ describe('POST /platform/redemptions/deliver', () => {
     const response = await request(server)
       .post('/platform/redemptions/deliver')
       .set('Authorization', `Bearer ${token}`)
-      .send({ redemptionId: randomUUID(), pickupCode: 'ABCDEF' })
+      .send({ redemptionId: randomUUID(), pickupCode: '123456' })
       .expect(400);
     expect((response.body as ErrorBody).code).toBe('VALIDATION_ERROR');
   });

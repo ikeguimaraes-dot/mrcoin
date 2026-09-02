@@ -1,4 +1,4 @@
-import { BadRequestException, Body, Controller, Get, Headers, Param, Post, UseGuards } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Get, Headers, Param, Post, Query, UseGuards } from '@nestjs/common';
 import { ApiCreatedResponse, ApiHeader, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { UserJwtGuard } from '../../common/guards/user-jwt.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
@@ -7,6 +7,8 @@ import { UserJwtPayload } from '../../common/guards/jwt-payload.types';
 import { RedemptionsService } from './redemptions.service';
 import { CreateRedemptionDto, createRedemptionSchema } from './dto/create-redemption.schema';
 import { RedemptionResponseDto } from './dto/redemption-response.schema';
+import { ListRedemptionsQueryDto, listRedemptionsQuerySchema } from './dto/list-redemptions-query.schema';
+import { RedemptionListResponseDto } from './dto/redemption-list-item.schema';
 
 function requireIdempotencyKey(idempotencyKey: string | undefined): string {
   if (!idempotencyKey?.trim()) {
@@ -38,6 +40,19 @@ export class RedemptionsController {
     @Body(new ZodValidationPipe(createRedemptionSchema)) body: CreateRedemptionDto,
   ) {
     return this.redemptionsService.create(user.sub, body, requireIdempotencyKey(idempotencyKey));
+  }
+
+  @Get()
+  @ApiOperation({ summary: 'Lista os resgates do usuário autenticado numa organização, paginado por cursor' })
+  @ApiOkResponse({ type: RedemptionListResponseDto })
+  list(
+    @CurrentUser() user: UserJwtPayload,
+    @Query(new ZodValidationPipe(listRedemptionsQuerySchema)) query: ListRedemptionsQueryDto,
+  ) {
+    return this.redemptionsService.list(user.sub, query.organizationId, {
+      cursor: query.cursor,
+      limit: query.limit,
+    });
   }
 
   @Get(':id')
