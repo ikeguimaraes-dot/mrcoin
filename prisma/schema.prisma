@@ -49,6 +49,7 @@ enum MembershipStatus {
 enum BatchStatus {
   PENDING
   PAID
+  REJECTED
   EXPIRED
   CANCELED
 }
@@ -429,19 +430,27 @@ model LedgerEntry {
 
 /// Lote de coins comprado por uma organização. Consumido em ordem FIFO
 /// (por `expiresAt`) nas distribuições e na expiração diária.
+/// pspChargeId nulo = lote do fluxo de aprovação manual (ASAAS_ENABLED=false, o padrão
+/// atual) — nunca chamou o PSP. approvedByPlatformAdminId/rejectedByPlatformAdminId/
+/// rejectionReason só existem no fluxo manual; lotes pagos via webhook do Asaas nunca os
+/// preenchem (ausência = "pago pelo fluxo antigo", não dado faltando). Sem carimbo de tempo
+/// dedicado pra aprovação/rejeição — `updatedAt` já serve (o status só muda uma vez).
 model CoinBatch {
-  id             String       @id @default(cuid())
-  organizationId String
-  organization   Organization @relation(fields: [organizationId], references: [id])
-  totalCoins     Int
-  remainingCoins Int
-  priceInCents   Int
-  status         BatchStatus  @default(PENDING)
-  expiresAt      DateTime
-  pspChargeId    String?      @unique
-  idempotencyKey String?      @unique
-  createdAt      DateTime     @default(now())
-  updatedAt      DateTime     @updatedAt
+  id                         String       @id @default(cuid())
+  organizationId             String
+  organization               Organization @relation(fields: [organizationId], references: [id])
+  totalCoins                 Int
+  remainingCoins             Int
+  priceInCents               Int
+  status                     BatchStatus  @default(PENDING)
+  expiresAt                  DateTime
+  pspChargeId                String?      @unique
+  idempotencyKey             String?      @unique
+  approvedByPlatformAdminId  String?
+  rejectedByPlatformAdminId  String?
+  rejectionReason            String?
+  createdAt                  DateTime     @default(now())
+  updatedAt                  DateTime     @updatedAt
 
   ledgerEntries LedgerEntry[]
 

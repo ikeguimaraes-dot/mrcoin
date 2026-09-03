@@ -1,28 +1,42 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { CoinBatch } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
-import { BillingService, PixChargeResult } from '../billing/billing.service';
+import { BillingService } from '../billing/billing.service';
 import { ConversionRateService } from '../settings/conversion-rate.service';
+import { Env } from '../../config/env.schema';
 import { BATCH_LIST_PAGE_SIZE, MIN_BATCH_PRICE_IN_CENTS } from './batches.constants';
 import { CreateBatchInput } from './dto/create-batch.schema';
 import { ListBatchesQuery } from './dto/list-batches.schema';
 import { IdempotencyConflictException } from './exceptions/idempotency-conflict.exception';
 import { SAFE_COIN_BATCH_SELECT, SafeCoinBatch, toSafeCoinBatch } from './safe-coin-batch.util';
 
+export type PixInfo =
+  | { method: 'ASAAS'; qrCodeImage: string; copyPasteCode: string; expirationDate: string }
+  | { method: 'MANUAL'; pixKey: string; amountInCents: number };
+
 export interface CreateBatchResult {
   batch: SafeCoinBatch;
-  pix: Pick<PixChargeResult, 'qrCodeImage' | 'copyPasteCode' | 'expirationDate'> | null;
+  pix: PixInfo | null;
 }
 
-/** Ciclo de vida do CoinBatch. Nunca chama LedgerService: pagar um lote só libera
+/**
+ * Ciclo de vida do CoinBatch. Nunca chama LedgerService: pagar/aprovar um lote só libera
  * estoque de coins (CoinBatch.status/remainingCoins) — o crédito na Wallet de um
- * Membership específico acontece depois, na distribuição (fora deste módulo). */
+ * Membership específico acontece depois, na distribuição (fora deste módulo).
+ *
+ * ASAAS_ENABLED=false (padrão — compra de lote virou aprovação manual pela plataforma):
+ * não chama o PSP, o lote nasce PENDING sem pspChargeId, e a resposta traz a chave Pix
+ * fixa da mrcoin + o valor exato em vez de um QR dinâmico. O código do Asaas continua
+ * intacto e é usado sem alteração quando ASAAS_ENABLED=true (rollback/caso específico).
+ */
 @Injectable()
 export class BatchesService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly billingService: BillingService,
     private readonly conversionRateService: ConversionRateService,
+    private readonly config: ConfigService<Env, true>,
   ) {}
 
   async createPendingBatch(
@@ -48,12 +62,11 @@ export class BatchesService {
       });
     }
 
-    const charge = await this.billingService.createChargeForOrganization(
-      organizationId,
-      priceInCents,
-      'Compra de lote de coins',
-      idempotencyKey,
-    );
+    const asaasEnabled = this.config.get('ASAAS_ENABLED', { infer: true });
+
+    const { pspChargeId, pix } = asaasEnabled
+      ? await this.createViaAsaas(organizationId, priceInCents, idempotencyKey)
+      : { pspChargeId: null, pix: this.manualPix(priceInCents) };
 
     const batch = await this.prisma.coinBatch.create({
       data: {
@@ -63,20 +76,13 @@ export class BatchesService {
         priceInCents,
         status: 'PENDING',
         expiresAt,
-        pspChargeId: charge.pspChargeId,
+        pspChargeId,
         idempotencyKey,
       },
       select: SAFE_COIN_BATCH_SELECT,
     });
 
-    return {
-      batch,
-      pix: {
-        qrCodeImage: charge.qrCodeImage,
-        copyPasteCode: charge.copyPasteCode,
-        expirationDate: charge.expirationDate,
-      },
-    };
+    return { batch, pix };
   }
 
   async listBatches(
@@ -100,6 +106,37 @@ export class BatchesService {
     return { items: page, nextCursor: hasMore && last ? last.id : null };
   }
 
+  private async createViaAsaas(
+    organizationId: string,
+    priceInCents: number,
+    idempotencyKey: string,
+  ): Promise<{ pspChargeId: string; pix: PixInfo }> {
+    const charge = await this.billingService.createChargeForOrganization(
+      organizationId,
+      priceInCents,
+      'Compra de lote de coins',
+      idempotencyKey,
+    );
+
+    return {
+      pspChargeId: charge.pspChargeId,
+      pix: {
+        method: 'ASAAS',
+        qrCodeImage: charge.qrCodeImage,
+        copyPasteCode: charge.copyPasteCode,
+        expirationDate: charge.expirationDate,
+      },
+    };
+  }
+
+  private manualPix(priceInCents: number): PixInfo {
+    return {
+      method: 'MANUAL',
+      pixKey: this.config.get('MRCOIN_PIX_KEY', { infer: true }),
+      amountInCents: priceInCents,
+    };
+  }
+
   private async replayExisting(
     existing: CoinBatch,
     organizationId: string,
@@ -113,7 +150,12 @@ export class BatchesService {
       throw new IdempotencyConflictException(idempotencyKey, { batchId: existing.id });
     }
 
-    const pix = existing.pspChargeId ? await this.billingService.refetchQrCode(existing.pspChargeId) : null;
+    // O modo é decidido pelo que o lote JÁ tem (pspChargeId presente = nasceu via Asaas),
+    // não pela flag atual — evita reconsultar o PSP errado se ASAAS_ENABLED mudar entre a
+    // criação original e o replay.
+    const pix = existing.pspChargeId
+      ? ({ method: 'ASAAS', ...(await this.billingService.refetchQrCode(existing.pspChargeId)) } satisfies PixInfo)
+      : this.manualPix(existing.priceInCents);
 
     return { batch: toSafeCoinBatch(existing), pix };
   }

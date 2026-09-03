@@ -67,6 +67,13 @@ export class AsaasClient {
     const baseUrl = this.config.get('ASAAS_BASE_URL', { infer: true });
     const apiKey = this.config.get('ASAAS_API_KEY', { infer: true });
 
+    // ASAAS_API_KEY é opcional no schema agora (só exigida quando ASAAS_ENABLED=true, via
+    // superRefine) — esse método só deveria ser chamado com o Asaas ligado. Falha alto e
+    // claro em vez de mandar `access_token: undefined` pro Asaas se algo chamar por engano.
+    if (!apiKey) {
+      throw new Error('ASAAS_API_KEY não configurada — AsaasClient não deveria ser chamado com ASAAS_ENABLED=false.');
+    }
+
     let response: Response;
     try {
       response = await fetch(`${baseUrl}${path}`, {

@@ -12,15 +12,15 @@ import { TokenService } from '../auth/token.service';
 import { PLATFORM_JWT_SERVICE } from '../platform-admin/platform-jwt.token';
 import { DEFAULT_COINS_PER_REAL_SCALED } from '../settings/settings.constants';
 
-interface PixInfo {
-  qrCodeImage: string;
-  copyPasteCode: string;
-  expirationDate: string;
+interface ManualPixInfo {
+  method: 'MANUAL';
+  pixKey: string;
+  amountInCents: number;
 }
 
 interface CreateBatchResponseBody {
   batch: CoinBatch;
-  pix: PixInfo | null;
+  pix: ManualPixInfo | null;
 }
 
 interface ListBatchesResponseBody {
@@ -28,10 +28,15 @@ interface ListBatchesResponseBody {
   nextCursor: string | null;
 }
 
-/** Bate no sandbox real do Asaas via BillingService (sem mock) — mesma filosofia de
- * teste do resto do repo. Exige ASAAS_API_KEY sandbox válida no `.env`. */
+/**
+ * Cobre o fluxo PADRÃO (ASAAS_ENABLED=false, definido em .env) — compra de lote virou
+ * aprovação manual pela plataforma, não chama o Asaas. O caminho legado com
+ * ASAAS_ENABLED=true tem regressão coberta à parte em batches.service.spec.ts (instancia o
+ * service direto com a flag ligada — evita a fragilidade de sobrescrever ConfigService
+ * global numa suíte HTTP inteira só pra um cenário).
+ */
 const FIXTURE_PASSWORD = 'Test@Password123';
-const WEBHOOK_SECRET = process.env.ASAAS_WEBHOOK_SECRET as string;
+const MRCOIN_PIX_KEY = process.env.MRCOIN_PIX_KEY as string;
 
 const prisma = new PrismaService();
 const jwtService = new JwtService({ secret: process.env.JWT_ACCESS_SECRET });
@@ -109,10 +114,6 @@ function tokenFor(admin: AdminFixture): Promise<string> {
   return tokenService.issueAccessToken({ id: admin.adminId, organizationId: admin.organizationId, role: admin.role });
 }
 
-function webhookPayload(pspChargeId: string, event = 'PAYMENT_RECEIVED') {
-  return { event, payment: { id: pspChargeId, status: 'RECEIVED' } };
-}
-
 async function expectedPriceFor(organizationId: string, totalCoins: number): Promise<number> {
   const rate = await prisma.conversionRate.findFirstOrThrow({
     where: { organizationId },
@@ -144,8 +145,8 @@ afterAll(async () => {
   await prisma.$disconnect();
 });
 
-describe('POST /admin/batches — fluxo completo com PSP em sandbox', () => {
-  it('OWNER cria lote pendente com cobrança Pix real e confirma via webhook, sem duplicar em reenvio', async () => {
+describe('POST /admin/batches — fluxo de aprovação manual (padrão, ASAAS_ENABLED=false)', () => {
+  it('OWNER cria lote pendente com a chave Pix da mrcoin — não chama o PSP, sem pspChargeId', async () => {
     const owner = await createAdmin('OWNER');
     const ownerToken = await tokenFor(owner);
     const idempotencyKey = `test-${randomUUID()}`;
@@ -160,31 +161,23 @@ describe('POST /admin/batches — fluxo completo com PSP em sandbox', () => {
     const created = createResponse.body as CreateBatchResponseBody;
     createdBatchIds.push(created.batch.id);
 
-    // Confirma que o backend CALCULA priceInCents a partir da taxa vigente DAQUELA
-    // organização (não aceita mais valor do cliente) — lê a taxa direto do banco em vez de
-    // assumir um valor fixo, porque outros specs também mudam taxas de outras orgs e a
-    // ordem entre arquivos e2e não é garantida.
     const expectedPriceInCents = await expectedPriceFor(owner.organizationId, 2000);
     expect(created.batch.status).toBe('PENDING');
     expect(created.batch.organizationId).toBe(owner.organizationId);
     expect(created.batch.totalCoins).toBe(2000);
     expect(created.batch.remainingCoins).toBe(2000);
     expect(created.batch.priceInCents).toBe(expectedPriceInCents);
-    expect(created.pix?.qrCodeImage.length).toBeGreaterThan(0);
-    expect(created.pix?.copyPasteCode.length).toBeGreaterThan(0);
+    expect(created.pix).toEqual({ method: 'MANUAL', pixKey: MRCOIN_PIX_KEY, amountInCents: expectedPriceInCents });
 
-    // SEGURANÇA: pspChargeId e idempotencyKey são referência interna do PSP / chave de
-    // replay — nunca saem na resposta HTTP. O valor real só é lido direto do banco abaixo,
-    // pra montar o payload do webhook (simulando o PSP, que não passa pela nossa API).
+    // SEGURANÇA: pspChargeId e idempotencyKey são referência interna / chave de replay —
+    // nunca saem na resposta HTTP.
     expect(created.batch).not.toHaveProperty('pspChargeId');
     expect(created.batch).not.toHaveProperty('idempotencyKey');
 
     const createdInDb = await prisma.coinBatch.findUniqueOrThrow({ where: { id: created.batch.id } });
-    const pspChargeId = createdInDb.pspChargeId as string;
-    expect(pspChargeId).toBeTruthy();
+    expect(createdInDb.pspChargeId).toBeNull();
 
-    // Replay idempotente — mesma chave e mesmo body não cria um segundo lote nem uma
-    // segunda cobrança no PSP.
+    // Replay idempotente — mesma chave e mesmo body não cria um segundo lote.
     const replayResponse = await request(server)
       .post('/admin/batches')
       .set('Authorization', `Bearer ${ownerToken}`)
@@ -194,43 +187,7 @@ describe('POST /admin/batches — fluxo completo com PSP em sandbox', () => {
 
     const replayed = replayResponse.body as CreateBatchResponseBody;
     expect(replayed.batch.id).toBe(created.batch.id);
-    expect(replayed.batch).not.toHaveProperty('pspChargeId');
-    const replayedInDb = await prisma.coinBatch.findUniqueOrThrow({ where: { id: replayed.batch.id } });
-    expect(replayedInDb.pspChargeId).toBe(pspChargeId);
-    expect(replayed.pix?.qrCodeImage.length).toBeGreaterThan(0);
-
-    // Webhook confirma o pagamento — lote vira PAID e um AuditLog de sistema é gravado.
-    await request(server)
-      .post('/webhooks/psp/payment')
-      .set('asaas-access-token', WEBHOOK_SECRET)
-      .send(webhookPayload(pspChargeId))
-      .expect(200);
-
-    const paidBatch = await prisma.coinBatch.findUniqueOrThrow({ where: { id: created.batch.id } });
-    expect(paidBatch.status).toBe('PAID');
-
-    const auditEntries = await prisma.auditLog.findMany({
-      where: { organizationId: owner.organizationId, action: 'BATCH_PAYMENT_CONFIRMED' },
-    });
-    expect(auditEntries).toHaveLength(1);
-    const [confirmedEntry] = auditEntries;
-    expect(confirmedEntry?.actorType).toBe('SYSTEM');
-    expect(confirmedEntry?.actorAdminUserId).toBeNull();
-
-    // Webhook duplicado — mesma notificação de novo não deve duplicar nada.
-    await request(server)
-      .post('/webhooks/psp/payment')
-      .set('asaas-access-token', WEBHOOK_SECRET)
-      .send(webhookPayload(pspChargeId))
-      .expect(200);
-
-    const stillPaidBatch = await prisma.coinBatch.findUniqueOrThrow({ where: { id: created.batch.id } });
-    expect(stillPaidBatch.status).toBe('PAID');
-
-    const auditEntriesAfterReplay = await prisma.auditLog.findMany({
-      where: { organizationId: owner.organizationId, action: 'BATCH_PAYMENT_CONFIRMED' },
-    });
-    expect(auditEntriesAfterReplay).toHaveLength(1);
+    expect(replayed.pix).toEqual({ method: 'MANUAL', pixKey: MRCOIN_PIX_KEY, amountInCents: expectedPriceInCents });
 
     const listResponse = await request(server)
       .get('/admin/batches')
@@ -239,9 +196,39 @@ describe('POST /admin/batches — fluxo completo com PSP em sandbox', () => {
 
     const list = listResponse.body as ListBatchesResponseBody;
     const listed = list.items.find((item) => item.id === created.batch.id);
-    expect(listed?.status).toBe('PAID');
+    expect(listed?.status).toBe('PENDING');
     expect(listed?.remainingCoins).toBe(2000);
   }, 30000);
+
+  it('GET /admin/batches expõe rejectionReason depois de uma recusa da plataforma', async () => {
+    const owner = await createAdmin('OWNER');
+    const ownerToken = await tokenFor(owner);
+    const platformAdminToken = await createPlatformAdminFixture();
+
+    const created = await request(server)
+      .post('/admin/batches')
+      .set('Authorization', `Bearer ${ownerToken}`)
+      .set('Idempotency-Key', `test-${randomUUID()}`)
+      .send({ totalCoins: 500 })
+      .expect(201);
+    const batchId = (created.body as CreateBatchResponseBody).batch.id;
+    createdBatchIds.push(batchId);
+
+    await request(server)
+      .post(`/platform/batches/${batchId}/reject`)
+      .set('Authorization', `Bearer ${platformAdminToken}`)
+      .send({ reason: 'Comprovante de pagamento não localizado' })
+      .expect(201);
+
+    const listResponse = await request(server)
+      .get('/admin/batches')
+      .set('Authorization', `Bearer ${ownerToken}`)
+      .expect(200);
+    const list = listResponse.body as ListBatchesResponseBody;
+    const listed = list.items.find((item) => item.id === batchId);
+    expect(listed?.status).toBe('REJECTED');
+    expect(listed?.rejectionReason).toBe('Comprovante de pagamento não localizado');
+  });
 
   it('Idempotency-Key repetida com body diferente retorna 409 IDEMPOTENCY_CONFLICT', async () => {
     const owner = await createAdmin('OWNER');
@@ -257,8 +244,6 @@ describe('POST /admin/batches — fluxo completo com PSP em sandbox', () => {
 
     createdBatchIds.push((first.body as CreateBatchResponseBody).batch.id);
 
-    // priceInCents não existe mais como input — o conflito agora é por totalCoins divergente
-    // na mesma Idempotency-Key.
     const conflict = await request(server)
       .post('/admin/batches')
       .set('Authorization', `Bearer ${ownerToken}`)

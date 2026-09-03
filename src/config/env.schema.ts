@@ -29,10 +29,21 @@ export const envSchema = z
     PLATFORM_ADMIN_JWT_SECRET: z.string().min(32),
     MFA_ENCRYPTION_KEY: z.string().regex(/^[0-9a-f]{64}$/i, 'deve ter 32 bytes em hex (64 caracteres)'),
     ADMIN_PANEL_URL: z.string().url().default('http://localhost:3001'),
+    // Compra de lote virou aprovação manual pela plataforma (mrcoin recebe o Pix fora do
+    // sistema e um platform admin confirma) — o código do Asaas fica no repo, desligado por
+    // padrão. ASAAS_API_KEY/ASAAS_WEBHOOK_SECRET só são exigidas quando isso for religado
+    // (ver superRefine), pra não forçar credencial real do PSP só pra subir o serviço.
+    ASAAS_ENABLED: z
+      .enum(['true', 'false'])
+      .default('false')
+      .transform((value) => value === 'true'),
     ASAAS_ENV: z.enum(['sandbox', 'production']).default('sandbox'),
-    ASAAS_API_KEY: z.string().min(1),
+    ASAAS_API_KEY: z.string().min(1).optional(),
     ASAAS_BASE_URL: z.string().url().default('https://api-sandbox.asaas.com/v3'),
-    ASAAS_WEBHOOK_SECRET: z.string().min(16),
+    ASAAS_WEBHOOK_SECRET: z.string().min(16).optional(),
+    // Chave Pix da própria mrcoin, exposta à empresa em POST /admin/batches pra pagamento
+    // manual — não é segredo de autenticação, é dado público mostrado na tela de checkout.
+    MRCOIN_PIX_KEY: z.string().min(1),
     LOCAL_STORAGE_DIR: z.string().min(1).default('./uploads'),
     // Só obrigatórias em produção (ver superRefine) — dev/test usam ConsoleEmailAdapter,
     // que não manda e-mail de verdade e não precisa de credencial nenhuma.
@@ -40,6 +51,19 @@ export const envSchema = z
     RESEND_FROM_EMAIL: z.string().email().optional(),
   })
   .superRefine((data, ctx) => {
+    // Independente de NODE_ENV: se alguém religar o Asaas em qualquer ambiente, a credencial
+    // de verdade passa a ser exigida (o client vai chamar a API de verdade).
+    if (data.ASAAS_ENABLED && !data.ASAAS_API_KEY) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['ASAAS_API_KEY'], message: 'obrigatório quando ASAAS_ENABLED=true' });
+    }
+    if (data.ASAAS_ENABLED && !data.ASAAS_WEBHOOK_SECRET) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['ASAAS_WEBHOOK_SECRET'],
+        message: 'obrigatório quando ASAAS_ENABLED=true',
+      });
+    }
+
     if (data.NODE_ENV !== 'production') return;
 
     if (!data.REDIS_URL.startsWith('rediss://') && !data.REDIS_ALLOW_PLAINTEXT) {

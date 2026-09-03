@@ -1,7 +1,8 @@
 import { CoinBatch, Prisma } from '@prisma/client';
 
 /** Shape de CoinBatch seguro pra sair em resposta HTTP — nunca pspChargeId (referência
- * interna do PSP) nem idempotencyKey (chave de replay). */
+ * interna do PSP), idempotencyKey (chave de replay), nem approvedByPlatformAdminId/
+ * rejectedByPlatformAdminId (identidade de quem decidiu não é assunto da empresa). */
 export const SAFE_COIN_BATCH_SELECT = {
   id: true,
   organizationId: true,
@@ -9,6 +10,7 @@ export const SAFE_COIN_BATCH_SELECT = {
   remainingCoins: true,
   priceInCents: true,
   status: true,
+  rejectionReason: true,
   expiresAt: true,
   createdAt: true,
   updatedAt: true,
@@ -27,6 +29,7 @@ export function toSafeCoinBatch(batch: CoinBatch): SafeCoinBatch {
     remainingCoins: batch.remainingCoins,
     priceInCents: batch.priceInCents,
     status: batch.status,
+    rejectionReason: batch.rejectionReason,
     expiresAt: batch.expiresAt,
     createdAt: batch.createdAt,
     updatedAt: batch.updatedAt,

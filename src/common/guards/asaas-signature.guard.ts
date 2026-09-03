@@ -18,7 +18,15 @@ export class AsaasSignatureGuard implements CanActivate {
     const receivedToken = request.headers['asaas-access-token'];
     const expectedToken = this.config.get('ASAAS_WEBHOOK_SECRET', { infer: true });
 
-    if (typeof receivedToken !== 'string' || !timingSafeEqualString(receivedToken, expectedToken)) {
+    // ASAAS_WEBHOOK_SECRET é opcional agora (só exigida quando ASAAS_ENABLED=true) — o
+    // endpoint continua mapeado mas ocioso com o Asaas desligado (regra do produto: não
+    // remover, só não chamar). Sem segredo configurado, rejeita tudo (falha fechado), nunca
+    // aceita por acidente nem derruba a request com 500.
+    if (
+      !expectedToken ||
+      typeof receivedToken !== 'string' ||
+      !timingSafeEqualString(receivedToken, expectedToken)
+    ) {
       throw new UnauthorizedException(INVALID_SIGNATURE_RESPONSE);
     }
 

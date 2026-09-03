@@ -20,6 +20,7 @@ import { PlatformPartnersModule } from './modules/platform-admin/partners/platfo
 import { PlatformOffersModule } from './modules/platform-admin/offers/platform-offers.module';
 import { PlatformDashboardModule } from './modules/platform-admin/dashboard/platform-dashboard.module';
 import { PlatformRedemptionsModule } from './modules/platform-admin/redemptions/platform-redemptions.module';
+import { PlatformBatchesModule } from './modules/platform-admin/batches/platform-batches.module';
 import { OrganizationsModule } from './modules/organizations/organizations.module';
 import { UsersModule } from './modules/users/users.module';
 import { WalletsModule } from './modules/wallets/wallets.module';
@@ -69,6 +70,7 @@ import { RedemptionsModule } from './modules/redemptions/redemptions.module';
     PlatformOffersModule,
     PlatformDashboardModule,
     PlatformRedemptionsModule,
+    PlatformBatchesModule,
     OrganizationsModule,
     UsersModule,
     WalletsModule,
