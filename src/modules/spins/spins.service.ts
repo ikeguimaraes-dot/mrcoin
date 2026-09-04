@@ -6,11 +6,16 @@ import { WalletsService } from '../wallets/wallets.service';
 import { IdempotencyConflictException } from '../distributions/exceptions/idempotency-conflict.exception';
 import { NoSpinAvailableException } from './exceptions/no-spin-available.exception';
 import { drawSector } from './sector-draw.util';
-import { SPIN_RESERVED_AMOUNT } from './spins.constants';
+import { SPIN_RESERVED_AMOUNT, SPIN_SECTORS } from './spins.constants';
 
 export interface RedeemSpinResult {
   sectorIndex: number;
   coinsAwarded: number;
+}
+
+export interface SpinsAvailableResult {
+  availableSpins: number;
+  sectors: number[];
 }
 
 /**
@@ -28,7 +33,7 @@ export class SpinsService {
     private readonly walletsService: WalletsService,
   ) {}
 
-  async getAvailableCount(userId: string, organizationId: string): Promise<{ availableSpins: number }> {
+  async getAvailableCount(userId: string, organizationId: string): Promise<SpinsAvailableResult> {
     const { membershipId } = await this.walletsService.resolveWalletId(userId, organizationId);
 
     await this.expireCallerSpins(membershipId);
@@ -37,7 +42,7 @@ export class SpinsService {
       where: { membershipId, status: 'PENDING', expiresAt: { gt: new Date() } },
     });
 
-    return { availableSpins };
+    return { availableSpins, sectors: Array.from(SPIN_SECTORS) };
   }
 
   async redeem(userId: string, organizationId: string, idempotencyKey: string): Promise<RedeemSpinResult> {

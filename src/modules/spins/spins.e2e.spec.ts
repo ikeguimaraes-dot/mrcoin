@@ -14,6 +14,7 @@ import { SPIN_SECTORS } from './spins.constants';
 
 interface SpinsAvailableResponseBody {
   availableSpins: number;
+  sectors: number[];
 }
 
 interface RedeemSpinResponseBody {
@@ -185,12 +186,29 @@ describe('GET /spins', () => {
       .set('Authorization', `Bearer ${token}`)
       .expect(200);
     expect((res.body as SpinsAvailableResponseBody).availableSpins).toBe(2);
+    expect((res.body as SpinsAvailableResponseBody).sectors).toEqual([...SPIN_SECTORS]);
 
     const expiredAfter = await prisma.spin.findUniqueOrThrow({ where: { id: expired.id } });
     expect(expiredAfter.status).toBe('EXPIRED');
 
     const batchAfter = await prisma.coinBatch.findUniqueOrThrow({ where: { id: batch.id } });
     expect(batchAfter.remainingCoins).toBe(batchBefore.remainingCoins + 1000);
+  });
+
+  it('devolve sectors mesmo com availableSpins zerado — o app desenha a roleta independente de ter giro', async () => {
+    const org = await createOrg();
+    const member = await createMember(org.id);
+    const token = await tokenFor(member.userId);
+
+    const res = await request(server)
+      .get('/spins')
+      .query({ organizationId: org.id })
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+    const body = res.body as SpinsAvailableResponseBody;
+
+    expect(body.availableSpins).toBe(0);
+    expect(body.sectors).toEqual([...SPIN_SECTORS]);
   });
 
   it('sem token retorna 401', async () => {
