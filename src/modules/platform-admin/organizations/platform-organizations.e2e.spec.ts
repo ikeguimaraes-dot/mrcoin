@@ -235,6 +235,106 @@ describe('Fluxo feliz — POST/GET/PATCH /platform/organizations', () => {
   });
 });
 
+interface OrgListItem {
+  id: string;
+  name: string;
+}
+
+interface OrgListResponseBody {
+  items: OrgListItem[];
+  nextCursor: string | null;
+}
+
+async function createOrgDirect(name: string): Promise<{ id: string; name: string }> {
+  const org = await prisma.organization.create({ data: { name, cnpj: fixtureCnpj() } });
+  createdOrgIds.push(org.id);
+  return org;
+}
+
+describe('GET /platform/organizations — busca por nome (q)', () => {
+  it('busca parcial encontra a organização pelo nome', async () => {
+    const { token } = await createPlatformAdminFixture();
+    const suffix = randomUUID();
+    const org = await createOrgDirect(`Zebra Distribuidora ${suffix} Ltda`);
+    await createOrgDirect(`Sem Relação Nenhuma ${suffix}`);
+
+    const res = await request(server)
+      .get('/platform/organizations')
+      .query({ q: `Distribuidora ${suffix}` })
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+    const body = res.body as OrgListResponseBody;
+
+    expect(body.items).toHaveLength(1);
+    expect(body.items[0]?.id).toBe(org.id);
+  });
+
+  it('busca é case-insensitive', async () => {
+    const { token } = await createPlatformAdminFixture();
+    const suffix = randomUUID();
+    const org = await createOrgDirect(`Cafeteria Aurora ${suffix} S.A.`);
+
+    const lower = await request(server)
+      .get('/platform/organizations')
+      .query({ q: `aurora ${suffix}` })
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+    const upper = await request(server)
+      .get('/platform/organizations')
+      .query({ q: `AURORA ${suffix}` })
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+
+    expect((lower.body as OrgListResponseBody).items.map((i) => i.id)).toEqual([org.id]);
+    expect((upper.body as OrgListResponseBody).items.map((i) => i.id)).toEqual([org.id]);
+  });
+
+  it('paginação continua correta com o filtro aplicado', async () => {
+    const { token } = await createPlatformAdminFixture();
+    const suffix = randomUUID();
+    const matching = await Promise.all(
+      [1, 2, 3].map((n) => createOrgDirect(`Rede Comercial ${suffix} Filial ${n}`)),
+    );
+    await createOrgDirect(`Fora Da Busca ${suffix}`);
+
+    const collected: OrgListItem[] = [];
+    let cursor: string | null = null;
+    let guard = 0;
+    do {
+      const res: request.Response = await request(server)
+        .get('/platform/organizations')
+        .query({ q: `Rede Comercial ${suffix}`, limit: 2, ...(cursor ? { cursor } : {}) })
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+      const body = res.body as OrgListResponseBody;
+      collected.push(...body.items);
+      cursor = body.nextCursor;
+      guard += 1;
+    } while (cursor && guard < 10);
+
+    expect(collected).toHaveLength(3);
+    expect(new Set(collected.map((i) => i.id)).size).toBe(3);
+    expect(collected.map((i) => i.id).sort()).toEqual(matching.map((o) => o.id).sort());
+  });
+
+  it('sem q, comportamento inalterado — traz organizações de nomes diferentes juntas', async () => {
+    const { token } = await createPlatformAdminFixture();
+    const suffix = randomUUID();
+    const orgA = await createOrgDirect(`Primeira Empresa ${suffix}`);
+    const orgB = await createOrgDirect(`Segunda Corporação ${suffix}`);
+
+    const res = await request(server)
+      .get('/platform/organizations')
+      .query({ limit: 100 })
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+    const ids = (res.body as OrgListResponseBody).items.map((i) => i.id);
+
+    expect(ids).toContain(orgA.id);
+    expect(ids).toContain(orgB.id);
+  });
+});
+
 describe('GET/PATCH /platform/organizations/:id/conversion-rate', () => {
   it('GET devolve a taxa vigente; PATCH muda e grava audit log', async () => {
     const { platformAdminId, token } = await createPlatformAdminFixture();

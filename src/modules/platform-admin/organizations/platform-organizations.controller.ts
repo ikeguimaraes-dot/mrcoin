@@ -39,7 +39,7 @@ export class PlatformOrganizationsController {
 
   @Get()
   @PlatformAdminAuth()
-  @ApiOperation({ summary: 'Lista todas as organizações da plataforma, paginado por cursor' })
+  @ApiOperation({ summary: 'Lista todas as organizações da plataforma, paginado por cursor — q opcional busca parcial no nome, case-insensitive' })
   @ApiOkResponse({ type: OrganizationListResponseDto })
   list(@Query(new ZodValidationPipe(listOrganizationsQuerySchema)) query: ListOrganizationsQueryDto) {
     return this.organizationsService.list(query);

@@ -96,9 +96,11 @@ export class PlatformOrganizationsService {
   async list(options?: {
     cursor?: string;
     limit?: number;
+    q?: string;
   }): Promise<{ items: OrganizationSummary[]; nextCursor: string | null }> {
     const limit = options?.limit ?? 20;
     const organizations = await this.prisma.organization.findMany({
+      where: options?.q ? { name: { contains: options.q, mode: 'insensitive' } } : undefined,
       orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
       take: limit + 1,
       ...(options?.cursor ? { cursor: { id: options.cursor }, skip: 1 } : {}),
