@@ -435,6 +435,12 @@ model LedgerEntry {
   @@index([batchId])
   @@index([distributionItemId])
   @@index([type, referenceType, createdAt])
+  /// Ranking mensal (GET /ranking) filtra por um conjunto pequeno e estável de walletIds (os
+  /// da organização) — liderar por walletId em vez de type/referenceType evita Seq Scan quando
+  /// um mês concentra boa parte da atividade da plataforma inteira (confirmado via EXPLAIN
+  /// ANALYZE em produção: o índice [type, referenceType, createdAt] sozinho já degrada pra
+  /// Seq Scan numa tabela de só ~5400 linhas).
+  @@index([walletId, type, referenceType, createdAt])
 }
 
 /// Lote de coins comprado por uma organização. Consumido em ordem FIFO

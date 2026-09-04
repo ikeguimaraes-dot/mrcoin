@@ -7,11 +7,13 @@ import { MembershipsController } from './memberships.controller';
 import { MembershipsService } from './memberships.service';
 import { TransferController } from './transfer.controller';
 import { TransferService } from './transfer.service';
+import { RankingController } from './ranking.controller';
+import { RankingService } from './ranking.service';
 
 @Module({
   imports: [LedgerModule, UsersModule],
-  controllers: [WalletsController, MembershipsController, TransferController],
-  providers: [WalletsService, MembershipsService, TransferService],
+  controllers: [WalletsController, MembershipsController, TransferController, RankingController],
+  providers: [WalletsService, MembershipsService, TransferService, RankingService],
   exports: [WalletsService],
 })
 export class WalletsModule {}
