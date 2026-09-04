@@ -4,9 +4,8 @@ import { Request } from 'express';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe';
 import { UserLoginRateLimitGuard } from '../../common/guards/user-login-rate-limit.guard';
 import { LoginService } from './login.service';
-import { RequestLoginDto, requestLoginSchema } from './dto/request-login.schema';
-import { VerifyLoginDto, verifyLoginSchema } from './dto/verify-login.schema';
-import { RequestOtpResponseDto, UserTokenPairResponseDto } from './dto/otp-response.schema';
+import { LoginDto, loginSchema } from './dto/login.schema';
+import { UserTokenPairResponseDto } from './dto/otp-response.schema';
 import { RequestMeta } from './user-token.service';
 
 function requestMeta(request: Request): RequestMeta {
@@ -21,17 +20,9 @@ export class LoginController {
   @Post()
   @UseGuards(UserLoginRateLimitGuard)
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Envia o código de acesso por e-mail pro CPF de uma conta já existente' })
-  @ApiOkResponse({ type: RequestOtpResponseDto })
-  requestOtp(@Body(new ZodValidationPipe(requestLoginSchema)) body: RequestLoginDto) {
-    return this.loginService.requestOtp(body);
-  }
-
-  @Post('verify')
-  @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Confirma o código e retorna a sessão — sem vínculo com organização' })
+  @ApiOperation({ summary: 'Login por CPF + senha — retorna a sessão direto, sem OTP' })
   @ApiOkResponse({ type: UserTokenPairResponseDto })
-  verify(@Body(new ZodValidationPipe(verifyLoginSchema)) body: VerifyLoginDto, @Req() request: Request) {
-    return this.loginService.verifyOtp(body, requestMeta(request));
+  login(@Body(new ZodValidationPipe(loginSchema)) body: LoginDto, @Req() request: Request) {
+    return this.loginService.login(body, requestMeta(request));
   }
 }

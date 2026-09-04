@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { encryptCpf, hashCpf } from '../../common/crypto/cpf-crypto.util';
 import { EMAIL_PORT, EmailPort } from '../../common/email/email.port';
+import { hashPassword } from '../auth/password.util';
 import { OTP_MAX_ATTEMPTS, OTP_TTL_MINUTES } from './users.constants';
 import { generateOtpCode, hashOtpCode } from './otp.util';
 import { RequestSignupInput } from './dto/request-signup.schema';
@@ -20,9 +21,11 @@ import { RequestMeta, UserTokenPair, UserTokenService } from './user-token.servi
  * Signup só existe como claim de um User PENDING_CLAIM (criado por uma distribuição — ver
  * módulo distributions). Sem conta pendente pra esse CPF (nunca existiu, ou já é ACTIVE —
  * já reivindicada antes), rejeita com CpfNotInvitedException: mesma exceção pros dois casos,
- * pra não vazar se o CPF já tem conta (mesmo princípio anti-enumeração do LoginService).
- * organizationId/membershipType nunca vêm do body — vêm das Memberships que a distribuição
- * já criou, descobertas em verifyOtp.
+ * pra não vazar se o CPF já tem conta (mesmo princípio anti-enumeração do
+ * PasswordRecoveryService — CPF não é tratado como segredo nessas etapas, só o login por
+ * senha precisa ser totalmente genérico). organizationId/membershipType nunca vêm do body —
+ * vêm das Memberships que a distribuição já criou, descobertas em verifyOtp. A senha definida
+ * aqui (verifyOtp) já sai a conta ACTIVE com ela pronta — ver LoginService.
  */
 @Injectable()
 export class SignupService {
@@ -100,21 +103,26 @@ export class SignupService {
       throw new OtpInvalidException();
     }
 
+    // argon2 é CPU-bound — hasheia fora da transação pra não segurar a conexão do banco
+    // presa esperando o hash.
+    const passwordHash = await hashPassword(input.password);
+
     const { userId } = await this.prisma.$transaction(async (tx) => {
       const existingUser = await tx.user.findUnique({ where: { cpfHash: pending.cpfHash } });
 
       // Estado pode ter mudado entre requestOtp e verify (ex.: claim concluído por outro
       // canal nesse meio-tempo) — trata igual a "não convidado", mesmo guard equivalente do
-      // LoginService entre requestOtp/verifyOtp.
+      // PasswordRecoveryService entre requestOtp/confirm.
       if (!existingUser || existingUser.status !== 'PENDING_CLAIM') {
         throw new CpfNotInvitedException();
       }
 
       // Só agora, com o OTP confirmado no e-mail que a pessoa acabou de informar, é seguro
-      // promover pra ACTIVE e gravar esse contato — nunca antes disso.
+      // promover pra ACTIVE e gravar esse contato — nunca antes disso. Já sai com senha
+      // definida (requisito do novo login por CPF+senha).
       const user = await tx.user.update({
         where: { id: existingUser.id },
-        data: { name: pending.name, phone: pending.phone, email: pending.email, status: 'ACTIVE' },
+        data: { name: pending.name, phone: pending.phone, email: pending.email, status: 'ACTIVE', passwordHash },
       });
 
       // Prova o CPF uma vez só, não um vínculo específico — ativa TODAS as memberships

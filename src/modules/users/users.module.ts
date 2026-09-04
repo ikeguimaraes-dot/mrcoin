@@ -3,6 +3,8 @@ import { SignupController } from './signup.controller';
 import { SignupService } from './signup.service';
 import { LoginController } from './login.controller';
 import { LoginService } from './login.service';
+import { PasswordRecoveryController } from './password-recovery.controller';
+import { PasswordRecoveryService } from './password-recovery.service';
 import { DevicesController } from './devices.controller';
 import { DevicesService } from './devices.service';
 import { NotificationPreferencesController } from './notification-preferences.controller';
@@ -17,6 +19,7 @@ import { TransactionPinService } from './transaction-pin.service';
   controllers: [
     SignupController,
     LoginController,
+    PasswordRecoveryController,
     DevicesController,
     NotificationPreferencesController,
     RefreshController,
@@ -25,6 +28,7 @@ import { TransactionPinService } from './transaction-pin.service';
   providers: [
     SignupService,
     LoginService,
+    PasswordRecoveryService,
     DevicesService,
     NotificationPreferencesService,
     UserTokenService,

@@ -1,107 +1,70 @@
 import { Inject, Injectable } from '@nestjs/common';
+import Redis from 'ioredis';
 import { PrismaService } from '../../prisma/prisma.service';
 import { hashCpf } from '../../common/crypto/cpf-crypto.util';
-import { EMAIL_PORT, EmailPort } from '../../common/email/email.port';
-import { OTP_MAX_ATTEMPTS, OTP_TTL_MINUTES } from './users.constants';
-import { generateOtpCode, hashOtpCode } from './otp.util';
-import { RequestLoginInput } from './dto/request-login.schema';
-import { VerifyLoginInput } from './dto/verify-login.schema';
-import { AccountNotFoundException } from './exceptions/account-not-found.exception';
-import { NoVerifiedContactException } from './exceptions/no-verified-contact.exception';
-import { OtpNotFoundException } from './exceptions/otp-not-found.exception';
-import { OtpExpiredException } from './exceptions/otp-expired.exception';
-import { OtpTooManyAttemptsException } from './exceptions/otp-too-many-attempts.exception';
-import { OtpInvalidException } from './exceptions/otp-invalid.exception';
+import { REDIS_CLIENT } from '../../common/redis/redis.constants';
+import { verifyPassword } from '../auth/password.util';
+import { LoginInput } from './dto/login.schema';
+import { InvalidLoginCredentialsException } from './exceptions/invalid-login-credentials.exception';
+import { LoginLockedException } from './exceptions/login-locked.exception';
 import { RequestMeta, UserTokenPair, UserTokenService } from './user-token.service';
 
+const LOGIN_MAX_ATTEMPTS = 5;
+const LOGIN_LOCKOUT_WINDOW_SECONDS = 900;
+
 /**
- * Login não cria nem vincula nada — só prova posse do CPF via OTP e devolve sessão.
- * Sem organizationId (diferente do signup): quem já tem conta pode ter vínculo com mais de
- * uma organização, resolvida depois via GET /memberships. O e-mail de destino é sempre o
- * já cadastrado no User — nunca aceito do request (não existe request de e-mail aqui, login
- * só recebe CPF), mesmo princípio anti-sequestro do SignupService.
+ * Hash argon2id fixo, pré-gerado uma vez (nunca de um segredo real) — usado como alvo de
+ * verifyPassword quando o CPF não existe ou a conta ainda não tem senha, só pra manter o
+ * custo de CPU (e logo o tempo de resposta) igual ao caso de senha errada de verdade. Nunca
+ * recalculado por request: o ponto é amortizar o custo do argon2, não gerar salt novo.
+ */
+const DUMMY_PASSWORD_HASH = '$argon2id$v=19$m=65536,p=4,t=3$Mcq6TSTMHoQuXQUP+QYQPw$jIWZq/5NgMj3iRpJtuE63EHzMVh62R//ozhlHtEJGZc';
+
+/**
+ * Login por CPF+senha, síncrono — sem OTP no caminho feliz (OTP agora só em
+ * PasswordRecoveryService). Anti-enumeração: CPF inexistente, CPF sem senha, conta não-ACTIVE
+ * e senha errada precisam ser indistinguíveis na resposta E no tempo — por isso verifyPassword
+ * é SEMPRE chamado (contra um hash real ou o DUMMY_PASSWORD_HASH), nunca pulado por um
+ * short-circuit como o AuthService.login de AdminUser faz hoje (desvio deliberado desse
+ * precedente, não um descuido).
+ *
+ * Bloqueio fixo (espelha TransactionPinService.verifyPin) chaveado por hashCpf — não por
+ * userId, já que aqui ainda não se sabe se existe usuário — o que faz um CPF inventado travar
+ * exatamente igual a um real, sem vazar existência também nessa resposta.
  */
 @Injectable()
 export class LoginService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly userTokenService: UserTokenService,
-    @Inject(EMAIL_PORT) private readonly emailPort: EmailPort,
+    @Inject(REDIS_CLIENT) private readonly redis: Redis,
   ) {}
 
-  async requestOtp(input: RequestLoginInput): Promise<{ expiresAt: Date }> {
+  async login(input: LoginInput, meta: RequestMeta = {}): Promise<UserTokenPair> {
     const cpfHash = hashCpf(input.cpf);
+    const lockKey = `login-fail:${cpfHash}`;
+
+    const currentFailures = await this.redis.get(lockKey);
+    if (currentFailures !== null && Number(currentFailures) >= LOGIN_MAX_ATTEMPTS) {
+      throw new LoginLockedException();
+    }
+
     const user = await this.prisma.user.findUnique({ where: { cpfHash } });
+    const hashToVerify = user?.passwordHash ?? DUMMY_PASSWORD_HASH;
+    const passwordValid = await verifyPassword(hashToVerify, input.password);
 
-    // Mesma exceção (mesmo status/code) pra CPF inexistente e pra PENDING_CLAIM — não vaza
-    // se o CPF já tem conta. PENDING_CLAIM precisa terminar o cadastro pelo link da
-    // organização (é isso que prova o contato e promove pra ACTIVE), não pelo login.
-    if (!user || user.status !== 'ACTIVE') {
-      throw new AccountNotFoundException();
+    if (user && user.status === 'ACTIVE' && user.passwordHash && passwordValid) {
+      await this.redis.del(lockKey);
+      return this.userTokenService.issueTokenPair(user.id, meta);
     }
 
-    if (!user.email) {
-      throw new NoVerifiedContactException();
+    const newCount = await this.redis.incr(lockKey);
+    if (newCount === 1) {
+      await this.redis.expire(lockKey, LOGIN_LOCKOUT_WINDOW_SECONDS);
     }
-
-    const rawCode = generateOtpCode();
-    const codeHash = hashOtpCode(rawCode);
-    const expiresAt = new Date(Date.now() + OTP_TTL_MINUTES * 60 * 1000);
-
-    await this.prisma.userLoginRequest.deleteMany({ where: { cpfHash, consumedAt: null } });
-    await this.prisma.userLoginRequest.create({ data: { cpfHash, codeHash, expiresAt } });
-
-    await this.emailPort.send({
-      to: user.email,
-      subject: 'Seu código de acesso',
-      text: `Seu código é ${rawCode}. Válido por ${OTP_TTL_MINUTES} minutos.`,
-    });
-
-    return { expiresAt };
-  }
-
-  async verifyOtp(input: VerifyLoginInput, meta: RequestMeta = {}): Promise<UserTokenPair> {
-    const cpfHash = hashCpf(input.cpf);
-    const pending = await this.prisma.userLoginRequest.findFirst({
-      where: { cpfHash, consumedAt: null },
-      orderBy: { createdAt: 'desc' },
-    });
-
-    if (!pending) {
-      throw new OtpNotFoundException();
+    if (newCount >= LOGIN_MAX_ATTEMPTS) {
+      throw new LoginLockedException();
     }
-
-    if (pending.expiresAt < new Date()) {
-      throw new OtpExpiredException();
-    }
-
-    if (pending.attempts >= OTP_MAX_ATTEMPTS) {
-      throw new OtpTooManyAttemptsException();
-    }
-
-    const codeHash = hashOtpCode(input.code);
-
-    if (codeHash !== pending.codeHash) {
-      const updated = await this.prisma.userLoginRequest.update({
-        where: { id: pending.id },
-        data: { attempts: { increment: 1 } },
-      });
-
-      if (updated.attempts >= OTP_MAX_ATTEMPTS) {
-        throw new OtpTooManyAttemptsException();
-      }
-      throw new OtpInvalidException();
-    }
-
-    // Estado pode ter mudado entre requestOtp e verify (ex: conta desativada nesse meio
-    // tempo) — trata igual a "não encontrada", mesma resposta de sempre.
-    const user = await this.prisma.user.findUnique({ where: { cpfHash } });
-    if (!user || user.status !== 'ACTIVE') {
-      throw new AccountNotFoundException();
-    }
-
-    await this.prisma.userLoginRequest.update({ where: { id: pending.id }, data: { consumedAt: new Date() } });
-
-    return this.userTokenService.issueTokenPair(user.id, meta);
+    throw new InvalidLoginCredentialsException();
   }
 }

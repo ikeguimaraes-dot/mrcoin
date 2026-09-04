@@ -274,6 +274,12 @@ model User {
   /// dígitos exigido em POST /redemptions. Nulo = usuário ainda não configurou (ver
   /// hasTransactionPin em GET /users/me).
   transactionPinHash   String?
+  /// Hash argon2id (hashPassword/verifyPassword, mesma função de senha/PIN) da senha de
+  /// login do app. Nulo = conta ainda sem senha — todo User anterior a esta feature nasce
+  /// assim; todo signup novo já sai com isso preenchido (SignupService.verifyOtp). Só
+  /// reescrito por POST /users/password/recovery/confirm, sempre incondicional (sem branch
+  /// de "primeira vez" — CPF sem senha e senha errada precisam ser indistinguíveis no login).
+  passwordHash         String?
   createdAt            DateTime   @default(now())
   updatedAt            DateTime   @updatedAt
 
@@ -362,12 +368,15 @@ model UserSignupRequest {
   @@index([cpfHash])
 }
 
-/// Pedido de OTP pra LOGIN (usuário que já existe) — mais enxuto que UserSignupRequest
-/// de propósito: login não cria/vincula nada, então não tem organizationId nem os campos
-/// de join-em-org (membershipType, externalRef, name/phone/email do formulário). O OTP
-/// sempre vai pro e-mail já cadastrado no User (LoginService), nunca aceita destino do
-/// request — sem "estado pendente" de contato pra promover, como UserSignupRequest tem.
-model UserLoginRequest {
+/// Pedido de OTP pra RECUPERAÇÃO DE SENHA (usuário que já existe) — login por CPF+senha é
+/// síncrono, sem OTP no caminho feliz; isto só serve pra provar posse do CPF antes de
+/// (re)definir passwordHash. Mais enxuto que UserSignupRequest de propósito: não cria nem
+/// vincula nada, então não tem organizationId nem campos de join-em-org (membershipType,
+/// externalRef, name/phone/email do formulário). O OTP sempre vai pro e-mail já cadastrado
+/// no User (PasswordRecoveryService), nunca aceita destino do request. Renomeado de
+/// UserLoginRequest — mesma forma, história de uso diferente (RENAME TABLE, sem perda de
+/// dado/índice).
+model UserPasswordResetRequest {
   id         String    @id @default(cuid())
   cpfHash    String
   codeHash   String

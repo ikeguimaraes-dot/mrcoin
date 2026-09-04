@@ -31,6 +31,8 @@ interface WalletResponseBody {
   cachedBalance: number;
 }
 
+const VALID_PASSWORD = 'Xk9$mQ2vL7correto';
+
 const prisma = new PrismaService();
 const rateLimitRedis = createRedisConnection(process.env.REDIS_URL as string);
 const capturedEmails: SendEmailParams[] = [];
@@ -176,7 +178,7 @@ describe('Fluxo completo de signup (claim)', () => {
 
     const code = extractCode(email);
 
-    const verifyRes = await request(server).post('/users/signup/verify').send({ cpf, code }).expect(200);
+    const verifyRes = await request(server).post('/users/signup/verify').send({ cpf, code, password: VALID_PASSWORD }).expect(200);
 
     const verifyBody = verifyRes.body as VerifyResponseBody;
     expect(verifyBody.accessToken).toBeTruthy();
@@ -225,7 +227,7 @@ describe('Claim de conta PENDING_CLAIM (criada por distribuição, sem contato v
     expect(sentAfterRequest.some((e) => e.to === claimEmail)).toBe(true);
 
     const code = extractCode(claimEmail);
-    const verifyRes = await request(server).post('/users/signup/verify').send({ cpf, code }).expect(200);
+    const verifyRes = await request(server).post('/users/signup/verify').send({ cpf, code, password: VALID_PASSWORD }).expect(200);
 
     const verifyBody = verifyRes.body as VerifyResponseBody;
     expect(verifyBody.accessToken).toBeTruthy();
@@ -264,7 +266,7 @@ describe('Claim de conta PENDING_CLAIM (criada por distribuição, sem contato v
       .expect(200);
 
     const code = extractCode(claimEmail);
-    const verifyRes = await request(server).post('/users/signup/verify').send({ cpf, code }).expect(200);
+    const verifyRes = await request(server).post('/users/signup/verify').send({ cpf, code, password: VALID_PASSWORD }).expect(200);
 
     const verifyBody = verifyRes.body as VerifyResponseBody;
     expect(verifyBody.accessToken).toBeTruthy();
@@ -302,7 +304,7 @@ describe('Claim de conta PENDING_CLAIM (criada por distribuição, sem contato v
       .expect(200);
 
     const code = extractCode(claimEmail);
-    const verifyRes = await request(server).post('/users/signup/verify').send({ cpf, code }).expect(200);
+    const verifyRes = await request(server).post('/users/signup/verify').send({ cpf, code, password: VALID_PASSWORD }).expect(200);
     const verifyBody = verifyRes.body as VerifyResponseBody;
 
     const promotedUser = await prisma.user.findUniqueOrThrow({ where: { id: pendingUser.id } });
@@ -368,7 +370,7 @@ describe('Claim de conta PENDING_CLAIM (criada por distribuição, sem contato v
 
     const code = extractCode(claimEmail);
     try {
-      await request(server).post('/users/signup/verify').send({ cpf, code }).expect(500);
+      await request(server).post('/users/signup/verify').send({ cpf, code, password: VALID_PASSWORD }).expect(500);
     } finally {
       ensureWalletSpy.mockRestore();
     }
@@ -385,7 +387,7 @@ describe('Claim de conta PENDING_CLAIM (criada por distribuição, sem contato v
 
     // O pedido de OTP não pode ter sido consumido por uma verificação que falhou — outra
     // tentativa com o MESMO código ainda deve funcionar.
-    const retryRes = await request(server).post('/users/signup/verify').send({ cpf, code }).expect(200);
+    const retryRes = await request(server).post('/users/signup/verify').send({ cpf, code, password: VALID_PASSWORD }).expect(200);
     const retryBody = retryRes.body as VerifyResponseBody;
     expect(retryBody.accessToken).toBeTruthy();
 
@@ -446,7 +448,7 @@ describe('Verificação de OTP — casos de erro', () => {
 
     const response = await request(server)
       .post('/users/signup/verify')
-      .send({ cpf, code: '000000' })
+      .send({ cpf, code: '000000', password: VALID_PASSWORD })
       .expect(401);
 
     expect((response.body as ErrorResponseBody).code).toBe('OTP_INVALID');
@@ -460,12 +462,12 @@ describe('Verificação de OTP — casos de erro', () => {
     await request(server).post('/users/signup').send({ cpf, name: 'X', email }).expect(200);
 
     for (let i = 0; i < 4; i += 1) {
-      await request(server).post('/users/signup/verify').send({ cpf, code: '000000' }).expect(401);
+      await request(server).post('/users/signup/verify').send({ cpf, code: '000000', password: VALID_PASSWORD }).expect(401);
     }
 
     const response = await request(server)
       .post('/users/signup/verify')
-      .send({ cpf, code: '000000' })
+      .send({ cpf, code: '000000', password: VALID_PASSWORD })
       .expect(429);
 
     expect((response.body as ErrorResponseBody).code).toBe('OTP_TOO_MANY_ATTEMPTS');
@@ -484,9 +486,43 @@ describe('Verificação de OTP — casos de erro', () => {
       data: { expiresAt: new Date(Date.now() - 1000) },
     });
 
-    const response = await request(server).post('/users/signup/verify').send({ cpf, code }).expect(400);
+    const response = await request(server).post('/users/signup/verify').send({ cpf, code, password: VALID_PASSWORD }).expect(400);
 
     expect((response.body as ErrorResponseBody).code).toBe('OTP_EXPIRED');
+  });
+});
+
+describe('Senha definida no cadastro', () => {
+  it('senha fraca, comum ou contendo o CPF retorna 400 — User continua PENDING_CLAIM (rollback)', async () => {
+    const org = await createOrg();
+    const { cpf, userId } = await createPendingClaim(org.id);
+    const email = `weak-password-${randomUUID()}@test.coins-api.dev`;
+
+    await request(server).post('/users/signup').send({ cpf, name: 'X', email }).expect(200);
+    const code = extractCode(email);
+
+    await request(server).post('/users/signup/verify').send({ cpf, code, password: 'curta1' }).expect(400);
+    await request(server).post('/users/signup/verify').send({ cpf, code, password: 'password123' }).expect(400);
+    await request(server)
+      .post('/users/signup/verify')
+      .send({ cpf, code, password: `senha-com-${cpf}-dentro` })
+      .expect(400);
+
+    const userAfter = await prisma.user.findUniqueOrThrow({ where: { id: userId } });
+    expect(userAfter.status).toBe('PENDING_CLAIM');
+    expect(userAfter.passwordHash).toBeNull();
+  });
+
+  it('a senha definida no cadastro já funciona logo em seguida em POST /users/login', async () => {
+    const org = await createOrg();
+    const { cpf } = await createPendingClaim(org.id);
+    const email = `login-after-signup-${randomUUID()}@test.coins-api.dev`;
+
+    await request(server).post('/users/signup').send({ cpf, name: 'X', email }).expect(200);
+    const code = extractCode(email);
+    await request(server).post('/users/signup/verify').send({ cpf, code, password: VALID_PASSWORD }).expect(200);
+
+    await request(server).post('/users/login').send({ cpf, password: VALID_PASSWORD }).expect(200);
   });
 });
 
@@ -502,10 +538,10 @@ describe('Segurança — CPF nunca em claro em log', () => {
     try {
       await request(server).post('/users/signup').send({ cpf, name: 'Sem Log', email }).expect(200);
 
-      await request(server).post('/users/signup/verify').send({ cpf, code: '000000' }).expect(401);
+      await request(server).post('/users/signup/verify').send({ cpf, code: '000000', password: VALID_PASSWORD }).expect(401);
 
       const code = extractCode(email);
-      await request(server).post('/users/signup/verify').send({ cpf, code }).expect(200);
+      await request(server).post('/users/signup/verify').send({ cpf, code, password: VALID_PASSWORD }).expect(200);
     } finally {
       const allOutput = [...stdoutSpy.mock.calls, ...stderrSpy.mock.calls]
         .map((call) => String(call[0]))

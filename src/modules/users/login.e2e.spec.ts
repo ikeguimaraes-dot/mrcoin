@@ -6,15 +6,11 @@ import request from 'supertest';
 import { AppModule } from '../../app.module';
 import { PrismaService } from '../../prisma/prisma.service';
 import { encryptCpf, hashCpf } from '../../common/crypto/cpf-crypto.util';
-import { EMAIL_PORT, EmailPort, SendEmailParams } from '../../common/email/email.port';
 import { createRedisConnection } from '../../common/redis/redis-connection.factory';
+import { hashPassword } from '../auth/password.util';
 import { DEFAULT_COINS_PER_REAL_SCALED } from '../settings/settings.constants';
 
-interface RequestOtpResponseBody {
-  expiresAt: string;
-}
-
-interface VerifyResponseBody {
+interface LoginResponseBody {
   accessToken: string;
   refreshToken: string;
   tokenType: string;
@@ -23,21 +19,17 @@ interface VerifyResponseBody {
 
 interface ErrorResponseBody {
   code: string;
+  message: string;
 }
 
 interface WalletResponseBody {
   cachedBalance: number;
 }
 
+const VALID_PASSWORD = 'Xk9$mQ2vL7correto';
+
 const prisma = new PrismaService();
 const rateLimitRedis = createRedisConnection(process.env.REDIS_URL as string);
-const capturedEmails: SendEmailParams[] = [];
-const fakeEmailPort: EmailPort = {
-  send: (params) => {
-    capturedEmails.push(params);
-    return Promise.resolve();
-  },
-};
 
 const createdOrgIds: string[] = [];
 const createdUserIds: string[] = [];
@@ -61,29 +53,25 @@ async function createOrg(): Promise<{ id: string }> {
   return organization;
 }
 
-async function createActiveUser(email: string | null): Promise<{ userId: string; cpf: string }> {
+async function createUser(overrides: {
+  status?: 'ACTIVE' | 'PENDING_CLAIM';
+  password?: string;
+}): Promise<{ userId: string; cpf: string }> {
   const cpf = randomCpf();
   const suffix = randomUUID();
+  const passwordHash = overrides.password ? await hashPassword(overrides.password) : undefined;
   const user = await prisma.user.create({
     data: {
       cpfEncrypted: encryptCpf(cpf),
       cpfHash: hashCpf(cpf),
       name: `Login Test User ${suffix}`,
-      email: email ?? undefined,
-      status: 'ACTIVE',
+      email: `login-${suffix}@test.coins-api.dev`,
+      status: overrides.status ?? 'ACTIVE',
+      passwordHash,
     },
   });
   createdUserIds.push(user.id);
   return { userId: user.id, cpf };
-}
-
-function extractCode(email: string): string {
-  const sent = [...capturedEmails].reverse().find((entry) => entry.to === email);
-  const match = sent?.text.match(/\d{6}/);
-  if (!match) {
-    throw new Error(`Nenhum código OTP capturado pra ${email}`);
-  }
-  return match[0];
 }
 
 /** Mesmo raciocínio de signup.e2e.spec.ts — só limpa a própria chave de IP, nunca as
@@ -96,13 +84,21 @@ async function clearLoginRateLimit(): Promise<void> {
   }
 }
 
+/** Zera só a janela deslizante do guard (rajada, 60s/5) pra isolar o teste do bloqueio fixo
+ * do LoginService (15min/5) — os dois têm o mesmo limite de 5, então sem isso o guard
+ * intercepta a 6ª chamada antes de exercitar o lock do service. */
+async function clearGuardCpfKey(cpf: string): Promise<void> {
+  await rateLimitRedis.del(`user-login-rl:cpf:${hashCpf(cpf)}`);
+}
+
+async function clearServiceLock(cpf: string): Promise<void> {
+  await rateLimitRedis.del(`login-fail:${hashCpf(cpf)}`);
+}
+
 beforeEach(clearLoginRateLimit);
 
 beforeAll(async () => {
-  const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
-    .overrideProvider(EMAIL_PORT)
-    .useValue(fakeEmailPort)
-    .compile();
+  const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
   app = moduleRef.createNestApplication();
   await app.init();
   server = app.getHttpServer() as Server;
@@ -119,9 +115,6 @@ afterAll(async () => {
   await prisma.ledgerEntry.deleteMany({ where: { walletId: { in: walletIds } } });
   await prisma.wallet.deleteMany({ where: { id: { in: walletIds } } });
   await prisma.membership.deleteMany({ where: { userId: { in: createdUserIds } } });
-  await prisma.userLoginRequest.deleteMany({
-    where: { cpfHash: { in: createdUserIds.length > 0 ? await cpfHashesOf(createdUserIds) : [] } },
-  });
   await prisma.userRefreshToken.deleteMany({ where: { userId: { in: createdUserIds } } });
   await prisma.user.deleteMany({ where: { id: { in: createdUserIds } } });
   await prisma.conversionRate.deleteMany({ where: { organizationId: { in: createdOrgIds } } });
@@ -129,29 +122,17 @@ afterAll(async () => {
   await prisma.$disconnect();
 });
 
-async function cpfHashesOf(userIds: string[]): Promise<string[]> {
-  const users = await prisma.user.findMany({ where: { id: { in: userIds } }, select: { cpfHash: true } });
-  return users.map((u) => u.cpfHash);
-}
-
-describe('Fluxo completo de login', () => {
-  it('request OTP -> verify devolve sessão válida em GET /wallet, sem organizationId no fluxo', async () => {
+describe('POST /users/login', () => {
+  it('CPF + senha certos devolvem sessão válida em GET /wallet', async () => {
     const org = await createOrg();
-    const email = `login-${randomUUID()}@test.coins-api.dev`;
-    const { cpf } = await createActiveUser(email);
+    const { cpf } = await createUser({ password: VALID_PASSWORD });
 
-    const requestRes = await request(server).post('/users/login').send({ cpf }).expect(200);
-    expect((requestRes.body as RequestOtpResponseBody).expiresAt).toBeDefined();
+    const res = await request(server).post('/users/login').send({ cpf, password: VALID_PASSWORD }).expect(200);
+    const body = res.body as LoginResponseBody;
+    expect(body.accessToken).toBeTruthy();
+    expect(body.refreshToken).toBeTruthy();
+    expect(body.tokenType).toBe('Bearer');
 
-    const code = extractCode(email);
-    const verifyRes = await request(server).post('/users/login/verify').send({ cpf, code }).expect(200);
-
-    const verifyBody = verifyRes.body as VerifyResponseBody;
-    expect(verifyBody.accessToken).toBeTruthy();
-    expect(verifyBody.refreshToken).toBeTruthy();
-    expect(verifyBody.tokenType).toBe('Bearer');
-
-    // Sessão emitida por login serve pro mesmo /wallet que a de signup — mesmo type:user.
     const user = await prisma.user.findUniqueOrThrow({ where: { cpfHash: hashCpf(cpf) } });
     const membership = await prisma.membership.create({
       data: { userId: user.id, organizationId: org.id, type: 'CUSTOMER' },
@@ -161,87 +142,85 @@ describe('Fluxo completo de login', () => {
     const walletRes = await request(server)
       .get('/wallet')
       .query({ organizationId: org.id })
-      .set('Authorization', `Bearer ${verifyBody.accessToken}`)
+      .set('Authorization', `Bearer ${body.accessToken}`)
       .expect(200);
     expect((walletRes.body as WalletResponseBody).cachedBalance).toBe(77);
   });
 
-  it('CPF sem conta e CPF PENDING_CLAIM devolvem o MESMO erro ACCOUNT_NOT_FOUND — não vaza se o CPF existe', async () => {
+  it('CPF inexistente, CPF sem senha e senha errada devolvem a MESMA resposta — não vaza o motivo', async () => {
+    const { cpf: cpfWithPassword } = await createUser({ password: VALID_PASSWORD });
+    const { cpf: cpfNoPassword } = await createUser({});
     const unknownCpf = randomCpf();
-    const unknownResponse = await request(server).post('/users/login').send({ cpf: unknownCpf }).expect(404);
-    expect((unknownResponse.body as ErrorResponseBody).code).toBe('ACCOUNT_NOT_FOUND');
 
-    const pendingCpf = randomCpf();
-    const pendingUser = await prisma.user.create({
-      data: {
-        cpfEncrypted: encryptCpf(pendingCpf),
-        cpfHash: hashCpf(pendingCpf),
-        name: 'Pendente de Claim',
-        status: 'PENDING_CLAIM',
-      },
-    });
-    createdUserIds.push(pendingUser.id);
+    const wrongPassword = await request(server)
+      .post('/users/login')
+      .send({ cpf: cpfWithPassword, password: 'senha-completamente-errada' })
+      .expect(401);
+    const noPassword = await request(server)
+      .post('/users/login')
+      .send({ cpf: cpfNoPassword, password: VALID_PASSWORD })
+      .expect(401);
+    const unknown = await request(server).post('/users/login').send({ cpf: unknownCpf, password: VALID_PASSWORD }).expect(401);
 
-    const pendingResponse = await request(server).post('/users/login').send({ cpf: pendingCpf }).expect(404);
-    expect((pendingResponse.body as ErrorResponseBody).code).toBe('ACCOUNT_NOT_FOUND');
+    const expected = { code: 'INVALID_CREDENTIALS', message: 'CPF ou senha inválidos.' };
+    expect(wrongPassword.body).toEqual(expected);
+    expect(noPassword.body).toEqual(expected);
+    expect(unknown.body).toEqual(expected);
   });
 
-  it('conta ACTIVE sem e-mail cadastrado retorna NO_VERIFIED_CONTACT', async () => {
-    const { cpf } = await createActiveUser(null);
+  it('conta PENDING_CLAIM devolve o mesmo INVALID_CREDENTIALS — claim se prova pelo cadastro, não pelo login', async () => {
+    const { cpf } = await createUser({ status: 'PENDING_CLAIM', password: VALID_PASSWORD });
 
-    const response = await request(server).post('/users/login').send({ cpf }).expect(409);
-    expect((response.body as ErrorResponseBody).code).toBe('NO_VERIFIED_CONTACT');
-  });
-});
-
-describe('Verificação de OTP de login — casos de erro', () => {
-  it('código errado incrementa attempts e falha com OTP_INVALID', async () => {
-    const email = `wrong-login-${randomUUID()}@test.coins-api.dev`;
-    const { cpf } = await createActiveUser(email);
-
-    await request(server).post('/users/login').send({ cpf }).expect(200);
-
-    const response = await request(server).post('/users/login/verify').send({ cpf, code: '000000' }).expect(401);
-    expect((response.body as ErrorResponseBody).code).toBe('OTP_INVALID');
+    const res = await request(server).post('/users/login').send({ cpf, password: VALID_PASSWORD }).expect(401);
+    expect((res.body as ErrorResponseBody).code).toBe('INVALID_CREDENTIALS');
   });
 
-  it('5ª tentativa errada vira OTP_TOO_MANY_ATTEMPTS', async () => {
-    const email = `bruteforce-login-${randomUUID()}@test.coins-api.dev`;
-    const { cpf } = await createActiveUser(email);
-
-    await request(server).post('/users/login').send({ cpf }).expect(200);
+  it('5 tentativas erradas travam a conta por 15min — nem a senha certa passa depois', async () => {
+    const { cpf } = await createUser({ password: VALID_PASSWORD });
 
     for (let i = 0; i < 4; i += 1) {
-      await request(server).post('/users/login/verify').send({ cpf, code: '000000' }).expect(401);
+      const res = await request(server).post('/users/login').send({ cpf, password: 'errada' }).expect(401);
+      expect((res.body as ErrorResponseBody).code).toBe('INVALID_CREDENTIALS');
     }
 
-    const response = await request(server).post('/users/login/verify').send({ cpf, code: '000000' }).expect(429);
-    expect((response.body as ErrorResponseBody).code).toBe('OTP_TOO_MANY_ATTEMPTS');
+    const fifth = await request(server).post('/users/login').send({ cpf, password: 'errada' }).expect(429);
+    expect((fifth.body as ErrorResponseBody).code).toBe('LOGIN_LOCKED');
+
+    // O guard conta por IP e por CPF — limpa as duas janelas pra isolar só o lock fixo do
+    // service (senão o guard bloqueia a 6ª chamada primeiro, mascarando o que queremos testar).
+    await clearGuardCpfKey(cpf);
+    await clearLoginRateLimit();
+    const sixth = await request(server).post('/users/login').send({ cpf, password: VALID_PASSWORD }).expect(429);
+    expect((sixth.body as ErrorResponseBody).code).toBe('LOGIN_LOCKED');
+
+    await clearServiceLock(cpf);
   });
 
-  it('código expirado retorna OTP_EXPIRED', async () => {
-    const email = `expired-login-${randomUUID()}@test.coins-api.dev`;
-    const { cpf } = await createActiveUser(email);
+  it('o mesmo bloqueio de 5 tentativas se aplica a um CPF totalmente inventado', async () => {
+    const unknownCpf = randomCpf();
 
-    await request(server).post('/users/login').send({ cpf }).expect(200);
-    const code = extractCode(email);
+    for (let i = 0; i < 4; i += 1) {
+      await request(server).post('/users/login').send({ cpf: unknownCpf, password: 'qualquer-coisa' }).expect(401);
+    }
 
-    await prisma.userLoginRequest.updateMany({
-      where: { cpfHash: hashCpf(cpf) },
-      data: { expiresAt: new Date(Date.now() - 1000) },
-    });
+    const fifth = await request(server).post('/users/login').send({ cpf: unknownCpf, password: 'qualquer-coisa' }).expect(429);
+    expect((fifth.body as ErrorResponseBody).code).toBe('LOGIN_LOCKED');
 
-    const response = await request(server).post('/users/login/verify').send({ cpf, code }).expect(400);
-    expect((response.body as ErrorResponseBody).code).toBe('OTP_EXPIRED');
+    await clearServiceLock(unknownCpf);
   });
 
-  it('sem pedido de OTP pendente retorna OTP_NOT_FOUND', async () => {
-    const { cpf } = await createActiveUser(`no-request-${randomUUID()}@test.coins-api.dev`);
+  it('login bem-sucedido reseta o contador de falhas', async () => {
+    const { cpf } = await createUser({ password: VALID_PASSWORD });
 
-    const response = await request(server)
-      .post('/users/login/verify')
-      .send({ cpf, code: '123456' })
-      .expect(404);
-    expect((response.body as ErrorResponseBody).code).toBe('OTP_NOT_FOUND');
+    await request(server).post('/users/login').send({ cpf, password: 'errada' }).expect(401);
+    await request(server).post('/users/login').send({ cpf, password: 'errada' }).expect(401);
+    await request(server).post('/users/login').send({ cpf, password: VALID_PASSWORD }).expect(200);
+
+    const remaining = await rateLimitRedis.get(`login-fail:${hashCpf(cpf)}`);
+    expect(remaining).toBeNull();
+  });
+
+  it('POST /users/login/verify não existe mais', async () => {
+    await request(server).post('/users/login/verify').send({ cpf: randomCpf(), code: '123456' }).expect(404);
   });
 });
