@@ -69,6 +69,13 @@ enum LedgerReferenceType {
   MANUAL_ADJUSTMENT
   REVERSAL
   TRANSFER
+  SPIN
+}
+
+enum SpinStatus {
+  PENDING
+  REDEEMED
+  EXPIRED
 }
 
 enum DistributionStatus {
@@ -172,6 +179,8 @@ model Organization {
   auditLogs       AuditLog[]
   adminInvites    AdminInvite[]
   conversionRates ConversionRate[]
+  spinGrants      SpinGrant[]
+  spins           Spin[]
 }
 
 /// Usuário do painel administrativo (coins-admin) de uma organização.
@@ -195,6 +204,7 @@ model AdminUser {
   auditLogs     AuditLog[]
   refreshTokens RefreshToken[]
   sentInvites   AdminInvite[]
+  spinGrants    SpinGrant[]
 
   @@index([organizationId])
 }
@@ -342,6 +352,8 @@ model Membership {
   redemptions       Redemption[]
   sentTransfers     Transfer[]         @relation("TransferSender")
   receivedTransfers Transfer[]         @relation("TransferRecipient")
+  spinGrants        SpinGrant[]
+  spins             Spin[]
 
   @@unique([userId, organizationId])
   @@index([organizationId])
@@ -468,8 +480,64 @@ model CoinBatch {
   updatedAt                  DateTime     @updatedAt
 
   ledgerEntries LedgerEntry[]
+  spins         Spin[]
 
   @@index([organizationId, expiresAt])
+}
+
+/// Um pedido de concessão de giros de roleta (CPF + quantidade) — espelha
+/// Distribution/DistributionItem. Idempotência é do PEDIDO inteiro (retry não duplica a
+/// concessão); cada giro concedido vira sua própria linha em Spin, resgatada
+/// independentemente (podem vir de lotes CoinBatch diferentes se o primeiro elegível esgotar
+/// no meio da concessão).
+model SpinGrant {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  adminUserId    String
+  adminUser      AdminUser    @relation(fields: [adminUserId], references: [id])
+  membershipId   String
+  membership     Membership   @relation(fields: [membershipId], references: [id])
+  quantity       Int
+  reason         String?
+  idempotencyKey String       @unique
+  createdAt      DateTime     @default(now())
+
+  spins Spin[]
+
+  @@index([organizationId])
+}
+
+/// Uma unidade de giro de roleta. `reservedBatch` trava 1.000 coins (SPIN_RESERVED_AMOUNT, o
+/// prêmio máximo) do lote no momento da concessão — essa reserva (uma escrita real em
+/// CoinBatch.remainingCoins, não só uma checagem) é o que garante que resgatar sempre credita
+/// algo, mesmo que o estoque da empresa mude entre conceder e girar. `sectorIndex`/
+/// `coinsAwarded` só existem depois de REDEEMED. `expiresAt` herda a validade do próprio lote
+/// que financia a reserva (não existe constante de expiração própria — o giro não pode
+/// sobreviver além do lote que o sustenta). `redeemIdempotencyKey` nullable+unique (mesmo
+/// padrão de CoinBatch.idempotencyKey): replay de POST /spins/redeem encontra o giro já
+/// resgatado por essa chave em vez de tentar consumir outro.
+model Spin {
+  id                    String     @id @default(cuid())
+  spinGrantId           String
+  spinGrant             SpinGrant  @relation(fields: [spinGrantId], references: [id])
+  organizationId        String
+  organization          Organization @relation(fields: [organizationId], references: [id])
+  membershipId          String
+  membership            Membership @relation(fields: [membershipId], references: [id])
+  reservedBatchId       String
+  reservedBatch         CoinBatch  @relation(fields: [reservedBatchId], references: [id], onDelete: Restrict)
+  status                SpinStatus @default(PENDING)
+  sectorIndex           Int?
+  coinsAwarded          Int?
+  ledgerEntryId         String?    @unique
+  redeemIdempotencyKey  String?    @unique
+  expiresAt             DateTime
+  redeemedAt            DateTime?
+  createdAt             DateTime   @default(now())
+
+  @@index([membershipId, status, expiresAt])
+  @@index([reservedBatchId])
 }
 
 /// Taxa global de conversão R$→coins (quantos coins uma organização recebe por real

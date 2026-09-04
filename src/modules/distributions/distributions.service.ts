@@ -18,6 +18,7 @@ import {
   JOB_PROCESS_DISTRIBUTION,
   QUEUE_PROCESS_DISTRIBUTION,
 } from './distributions.constants';
+import { ensureUserMembershipWallet } from './ensure-user-membership-wallet.util';
 import { listDistributionItems } from './list-distribution-items.util';
 import { SAFE_DISTRIBUTION_ITEM_SELECT, SafeDistributionItem } from './safe-distribution-item.util';
 import { SAFE_DISTRIBUTION_SELECT, SafeDistribution } from './safe-distribution.util';
@@ -99,30 +100,14 @@ export class DistributionsService {
     const { distribution, item, userId } = await this.prisma.$transaction(async (tx) => {
       const plan = await this.planFifoOrThrow(tx, organizationId, input.amount);
 
-      const user = await tx.user.upsert({
-        where: { cpfHash },
-        create: {
-          cpfEncrypted: encryptCpf(input.cpf),
-          cpfHash,
-          name: input.name,
-          status: 'PENDING_CLAIM',
-        },
-        update: {},
+      const { userId: ensuredUserId, membershipId, walletId } = await ensureUserMembershipWallet(tx, {
+        cpfEncrypted: encryptCpf(input.cpf),
+        cpfHash,
+        name: input.name,
+        organizationId,
+        membershipType: input.membershipType,
+        externalRef: input.externalRef,
       });
-
-      const membership = await tx.membership.upsert({
-        where: { userId_organizationId: { userId: user.id, organizationId } },
-        create: {
-          userId: user.id,
-          organizationId,
-          type: input.membershipType,
-          externalRef: input.externalRef,
-        },
-        update: {},
-      });
-
-      const existingWallet = await tx.wallet.findUnique({ where: { membershipId: membership.id } });
-      const wallet = existingWallet ?? (await tx.wallet.create({ data: { membershipId: membership.id } }));
 
       const createdDistribution = await tx.distribution.create({
         data: {
@@ -141,7 +126,7 @@ export class DistributionsService {
       const createdItem = await tx.distributionItem.create({
         data: {
           distributionId: createdDistribution.id,
-          membershipId: membership.id,
+          membershipId,
           amount: input.amount,
           status: 'OK',
         },
@@ -152,7 +137,7 @@ export class DistributionsService {
         tx,
         plan,
         organizationId,
-        wallet.id,
+        walletId,
         createdItem.id,
         `distribution:${idempotencyKey}`,
         input.reason,
@@ -161,7 +146,7 @@ export class DistributionsService {
       return {
         distribution: createdDistribution,
         item: { ...createdItem, ledgerEntries: ledgerEntries.map(toSafeLedgerEntry) },
-        userId: user.id,
+        userId: ensuredUserId,
       };
     });
 
@@ -404,39 +389,23 @@ export class DistributionsService {
 
           const plan = await this.planFifoOrThrow(tx, organizationId, item.amount);
 
-          const user = await tx.user.upsert({
-            where: { cpfHash: item.cpfHash },
-            create: {
-              cpfEncrypted: item.cpfEncrypted,
-              cpfHash: item.cpfHash,
-              name: item.name,
-              status: 'PENDING_CLAIM',
-            },
-            update: {},
+          const { userId: ensuredUserId, membershipId, walletId } = await ensureUserMembershipWallet(tx, {
+            cpfEncrypted: item.cpfEncrypted,
+            cpfHash: item.cpfHash,
+            name: item.name,
+            organizationId,
+            membershipType: item.membershipType,
+            externalRef: item.externalRef,
           });
 
-          const membership = await tx.membership.upsert({
-            where: { userId_organizationId: { userId: user.id, organizationId } },
-            create: {
-              userId: user.id,
-              organizationId,
-              type: item.membershipType,
-              externalRef: item.externalRef ?? undefined,
-            },
-            update: {},
-          });
-
-          const existingWallet = await tx.wallet.findUnique({ where: { membershipId: membership.id } });
-          const wallet = existingWallet ?? (await tx.wallet.create({ data: { membershipId: membership.id } }));
-
-          await this.executeFifoPlan(tx, plan, organizationId, wallet.id, item.id, `distribution-item:${item.id}`);
+          await this.executeFifoPlan(tx, plan, organizationId, walletId, item.id, `distribution-item:${item.id}`);
 
           await tx.distributionItem.update({
             where: { id: item.id },
-            data: { status: 'OK', membershipId: membership.id, cpfHash: null, cpfEncrypted: null },
+            data: { status: 'OK', membershipId, cpfHash: null, cpfEncrypted: null },
           });
 
-          return user.id;
+          return ensuredUserId;
           },
           { maxWait: 15_000, timeout: 15_000 },
         );

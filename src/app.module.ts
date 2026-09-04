@@ -33,6 +33,7 @@ import { MembersModule } from './modules/members/members.module';
 import { PartnersModule } from './modules/partners/partners.module';
 import { OffersModule } from './modules/offers/offers.module';
 import { RedemptionsModule } from './modules/redemptions/redemptions.module';
+import { SpinsModule } from './modules/spins/spins.module';
 
 @Module({
   imports: [
@@ -83,6 +84,7 @@ import { RedemptionsModule } from './modules/redemptions/redemptions.module';
     PartnersModule,
     OffersModule,
     RedemptionsModule,
+    SpinsModule,
   ],
   providers: [
     { provide: APP_FILTER, useClass: AllExceptionsFilter },

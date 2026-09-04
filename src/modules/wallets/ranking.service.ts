@@ -28,11 +28,13 @@ interface RosterEntry {
 }
 
 /**
- * "Ganho" aqui = CREDIT/DISTRIBUTION líquido de REVERSAL (mesmo par credit/reversal-credit já
- * usado em WalletsService.getLifetimeTotals e DashboardService) — uma distribuição corrigida
- * não deveria contar como ganho de verdade. A reversão abate no mês em que ELA acontece (não
- * retroage pro mês da distribuição original), consistente com a regra já fechada pro
- * dashboard.
+ * "Ganho" aqui = CREDIT/(DISTRIBUTION ou SPIN) líquido de REVERSAL (mesmo par credit/reversal-
+ * credit já usado em WalletsService.getLifetimeTotals e DashboardService) — uma distribuição
+ * ou prêmio de roleta corrigido não deveria contar como ganho de verdade. SPIN entra junto de
+ * DISTRIBUTION porque prêmio de roleta também é uma forma de "a empresa deu coins pro
+ * funcionário" — excluir deixaria o ranking cego pra metade do que conta como ganho. A
+ * reversão abate no mês em que ELA acontece (não retroage pro mês do ganho original),
+ * consistente com a regra já fechada pro dashboard.
  *
  * Desempate por "quem chegou no total primeiro" usa o createdAt do CREDIT mais recente que
  * compõe o total (não do REVERSAL) — o desempate é sobre a conquista, não sobre uma correção
@@ -65,7 +67,7 @@ export class RankingService {
         where: {
           walletId: { in: walletIds },
           type: 'CREDIT',
-          referenceType: 'DISTRIBUTION',
+          referenceType: { in: ['DISTRIBUTION', 'SPIN'] },
           createdAt: { gte: monthStart, lt: monthEnd },
         },
         _sum: { amount: true },
@@ -76,7 +78,7 @@ export class RankingService {
         where: {
           walletId: { in: walletIds },
           type: 'REVERSAL',
-          reversalOf: { type: 'CREDIT', referenceType: 'DISTRIBUTION' },
+          reversalOf: { type: 'CREDIT', referenceType: { in: ['DISTRIBUTION', 'SPIN'] } },
           createdAt: { gte: monthStart, lt: monthEnd },
         },
         _sum: { amount: true },
