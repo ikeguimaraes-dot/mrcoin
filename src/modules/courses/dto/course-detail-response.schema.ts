@@ -1,7 +1,7 @@
 import { createZodDto } from 'nestjs-zod';
 import { z } from 'zod';
 
-export const quizStateSchema = z.enum(['AVAILABLE', 'LOCKED', 'APPROVED']);
+export const quizStateSchema = z.enum(['LESSONS_PENDING', 'AVAILABLE', 'LOCKED', 'APPROVED']);
 
 export const courseLessonSchema = z.object({
   id: z.string(),
@@ -15,6 +15,7 @@ export const courseLessonSchema = z.object({
 
 export const courseQuizStateSchema = z.object({
   state: quizStateSchema,
+  pendingLessons: z.number().int().nullable(),
   lockedUntil: z.string().datetime().nullable(),
   approvedAt: z.string().datetime().nullable(),
   scorePercent: z.number().int().nullable(),

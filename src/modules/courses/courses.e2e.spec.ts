@@ -19,7 +19,12 @@ interface CourseListItemBody {
 interface CourseDetailBody {
   id: string;
   lessons: { id: string; thumbnailUrl: string | null; completed: boolean }[];
-  quiz: { state: 'AVAILABLE' | 'LOCKED' | 'APPROVED'; lockedUntil: string | null; scorePercent: number | null } | null;
+  quiz: {
+    state: 'LESSONS_PENDING' | 'AVAILABLE' | 'LOCKED' | 'APPROVED';
+    pendingLessons: number | null;
+    lockedUntil: string | null;
+    scorePercent: number | null;
+  } | null;
 }
 
 interface QuizResponseBody {
@@ -160,6 +165,31 @@ async function createCourseWithQuiz(
   };
 }
 
+/** Marca a aula como assistida via API (mesma rota real) — pré-requisito pro quiz liberar
+ * desde que POST/GET .../quiz passaram a exigir todas as aulas do curso assistidas. */
+async function completeLesson(token: string, courseId: string, lessonId: string, organizationId: string): Promise<void> {
+  await request(server)
+    .post(`/courses/${courseId}/lessons/${lessonId}/complete`)
+    .set('Authorization', `Bearer ${token}`)
+    .send({ organizationId })
+    .expect(201);
+}
+
+/** Adiciona uma 2ª aula a um curso já criado por `createCourseWithQuiz` — usado pra testar o
+ * gate de "assistiu todas as aulas" com mais de uma aula pendente. */
+async function addLesson(courseId: string, displayOrder: number): Promise<string> {
+  const lesson = await prisma.lesson.create({
+    data: {
+      courseId,
+      title: `Aula ${displayOrder + 1}`,
+      videoUrl: 'https://youtube.com/watch?v=unlisted',
+      durationSeconds: 300,
+      displayOrder,
+    },
+  });
+  return lesson.id;
+}
+
 beforeAll(async () => {
   moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
   app = moduleRef.createNestApplication();
@@ -213,6 +243,7 @@ describe('GET /courses', () => {
       .send({ organizationId: org.id })
       .expect(201);
 
+    await completeLesson(token, completed.course.id, completed.lessonId, org.id);
     await request(server)
       .post(`/courses/${completed.course.id}/quiz/submit`)
       .set('Authorization', `Bearer ${token}`)
@@ -288,6 +319,7 @@ describe('GET /courses/:id/quiz', () => {
     const member = await createMember(org.id);
     const token = await tokenFor(member.userId);
     const fixture = await createCourseWithQuiz(3);
+    await completeLesson(token, fixture.course.id, fixture.lessonId, org.id);
 
     const res = await request(server)
       .get(`/courses/${fixture.course.id}/quiz`)
@@ -305,6 +337,132 @@ describe('GET /courses/:id/quiz', () => {
   });
 });
 
+describe('Quiz bloqueado por aulas pendentes', () => {
+  it('aula pendente bloqueia GET/POST do quiz e informa quantas faltam', async () => {
+    const org = await createOrg();
+    const member = await createMember(org.id);
+    const token = await tokenFor(member.userId);
+    const fixture = await createCourseWithQuiz(5);
+    await addLesson(fixture.course.id, 1);
+    // Só a 1ª das 2 aulas assistida — falta 1.
+    await completeLesson(token, fixture.course.id, fixture.lessonId, org.id);
+
+    const detailRes = await request(server)
+      .get(`/courses/${fixture.course.id}`)
+      .query({ organizationId: org.id })
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+    const quizState = (detailRes.body as CourseDetailBody).quiz;
+    expect(quizState?.state).toBe('LESSONS_PENDING');
+    expect(quizState?.pendingLessons).toBe(1);
+
+    const quizRes = await request(server)
+      .get(`/courses/${fixture.course.id}/quiz`)
+      .query({ organizationId: org.id })
+      .set('Authorization', `Bearer ${token}`)
+      .expect(422);
+    expect((quizRes.body as ErrorResponseBody).code).toBe('QUIZ_LESSONS_PENDING');
+    expect((quizRes.body as ErrorResponseBody).details).toEqual({ pendingLessons: 1 });
+
+    const submitRes = await request(server)
+      .post(`/courses/${fixture.course.id}/quiz/submit`)
+      .set('Authorization', `Bearer ${token}`)
+      .set('Idempotency-Key', `test-${randomUUID()}`)
+      .send({ organizationId: org.id, answers: fixture.buildAnswers(5) })
+      .expect(422);
+    expect((submitRes.body as ErrorResponseBody).code).toBe('QUIZ_LESSONS_PENDING');
+    expect((submitRes.body as ErrorResponseBody).details).toEqual({ pendingLessons: 1 });
+
+    const attempts = await prisma.quizAttempt.findMany({
+      where: { quizId: fixture.quiz.id, membershipId: member.membershipId },
+    });
+    expect(attempts).toHaveLength(0);
+  });
+
+  it('assistir a aula que faltava libera o quiz na hora', async () => {
+    const org = await createOrg();
+    const member = await createMember(org.id);
+    const token = await tokenFor(member.userId);
+    await createPaidBatch(org.id, 5000, 90);
+    const fixture = await createCourseWithQuiz(5);
+    const secondLessonId = await addLesson(fixture.course.id, 1);
+    await completeLesson(token, fixture.course.id, fixture.lessonId, org.id);
+
+    const blockedDetail = await request(server)
+      .get(`/courses/${fixture.course.id}`)
+      .query({ organizationId: org.id })
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+    expect((blockedDetail.body as CourseDetailBody).quiz).toMatchObject({ state: 'LESSONS_PENDING' });
+
+    await completeLesson(token, fixture.course.id, secondLessonId, org.id);
+
+    const unlockedDetail = await request(server)
+      .get(`/courses/${fixture.course.id}`)
+      .query({ organizationId: org.id })
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+    expect((unlockedDetail.body as CourseDetailBody).quiz).toMatchObject({ state: 'AVAILABLE' });
+
+    await request(server)
+      .post(`/courses/${fixture.course.id}/quiz/submit`)
+      .set('Authorization', `Bearer ${token}`)
+      .set('Idempotency-Key', `test-${randomUUID()}`)
+      .send({ organizationId: org.id, answers: fixture.buildAnswers(5) })
+      .expect(201);
+  });
+
+  it('curso sem nenhuma aula cadastrada nunca fica LESSONS_PENDING', async () => {
+    const org = await createOrg();
+    const member = await createMember(org.id);
+    const token = await tokenFor(member.userId);
+    await createPaidBatch(org.id, 5000, 90);
+
+    const suffix = randomUUID();
+    const course = await prisma.course.create({
+      data: { title: `Curso Sem Aula ${suffix}`, description: 'x', displayOrder: 0, status: 'PUBLISHED' },
+    });
+    createdCourseIds.push(course.id);
+    const quiz = await prisma.quiz.create({ data: { courseId: course.id } });
+    const question = await prisma.quizQuestion.create({
+      data: {
+        quizId: quiz.id,
+        prompt: 'Pergunta única?',
+        displayOrder: 0,
+        options: {
+          create: [
+            { text: 'Certa', isCorrect: true, displayOrder: 0 },
+            { text: 'Errada', isCorrect: false, displayOrder: 1 },
+          ],
+        },
+      },
+      include: { options: true },
+    });
+    const correctOptionId = question.options.find((o) => o.isCorrect)!.id;
+
+    const detailRes = await request(server)
+      .get(`/courses/${course.id}`)
+      .query({ organizationId: org.id })
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+    expect((detailRes.body as CourseDetailBody).quiz).toMatchObject({ state: 'AVAILABLE' });
+
+    await request(server)
+      .get(`/courses/${course.id}/quiz`)
+      .query({ organizationId: org.id })
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+
+    const submitRes = await request(server)
+      .post(`/courses/${course.id}/quiz/submit`)
+      .set('Authorization', `Bearer ${token}`)
+      .set('Idempotency-Key', `test-${randomUUID()}`)
+      .send({ organizationId: org.id, answers: [{ questionId: question.id, selectedOptionId: correctOptionId }] })
+      .expect(201);
+    expect((submitRes.body as SubmitQuizResponseBody).passed).toBe(true);
+  });
+});
+
 describe('POST /courses/:id/quiz/submit', () => {
   it('80% exato aprova e credita os 50 coins na hora quando há estoque', async () => {
     const org = await createOrg();
@@ -313,6 +471,7 @@ describe('POST /courses/:id/quiz/submit', () => {
     await createPaidBatch(org.id, 5000, 90);
     // 4/5 corretas = 80,0% exato.
     const fixture = await createCourseWithQuiz(5);
+    await completeLesson(token, fixture.course.id, fixture.lessonId, org.id);
 
     const res = await request(server)
       .post(`/courses/${fixture.course.id}/quiz/submit`)
@@ -340,6 +499,7 @@ describe('POST /courses/:id/quiz/submit', () => {
     const token = await tokenFor(member.userId);
     // floor(19*100/24) = floor(79.16) = 79% exato.
     const fixture = await createCourseWithQuiz(24);
+    await completeLesson(token, fixture.course.id, fixture.lessonId, org.id);
 
     const res = await request(server)
       .post(`/courses/${fixture.course.id}/quiz/submit`)
@@ -365,6 +525,7 @@ describe('POST /courses/:id/quiz/submit', () => {
     const member = await createMember(org.id);
     const token = await tokenFor(member.userId);
     const fixture = await createCourseWithQuiz(5);
+    await completeLesson(token, fixture.course.id, fixture.lessonId, org.id);
 
     await request(server)
       .post(`/courses/${fixture.course.id}/quiz/submit`)
@@ -388,6 +549,7 @@ describe('POST /courses/:id/quiz/submit', () => {
     const token = await tokenFor(member.userId);
     await createPaidBatch(org.id, 5000, 90);
     const fixture = await createCourseWithQuiz(5);
+    await completeLesson(token, fixture.course.id, fixture.lessonId, org.id);
 
     await request(server)
       .post(`/courses/${fixture.course.id}/quiz/submit`)
@@ -421,6 +583,7 @@ describe('POST /courses/:id/quiz/submit', () => {
     const token = await tokenFor(member.userId);
     await createPaidBatch(org.id, 5000, 90);
     const fixture = await createCourseWithQuiz(5);
+    await completeLesson(token, fixture.course.id, fixture.lessonId, org.id);
 
     await request(server)
       .post(`/courses/${fixture.course.id}/quiz/submit`)
@@ -449,6 +612,7 @@ describe('POST /courses/:id/quiz/submit', () => {
     const token = await tokenFor(member.userId);
     await createPaidBatch(org.id, 5000, 90);
     const fixture = await createCourseWithQuiz(5);
+    await completeLesson(token, fixture.course.id, fixture.lessonId, org.id);
 
     const [resA, resB] = await Promise.all([
       request(server)
@@ -489,6 +653,7 @@ describe('POST /courses/:id/quiz/submit', () => {
     const token = await tokenFor(member.userId);
     // Sem lote PAID — estoque zerado.
     const fixture = await createCourseWithQuiz(5);
+    await completeLesson(token, fixture.course.id, fixture.lessonId, org.id);
 
     const res = await request(server)
       .post(`/courses/${fixture.course.id}/quiz/submit`)
@@ -527,6 +692,7 @@ describe('POST /courses/:id/quiz/submit', () => {
     const token = await tokenFor(member.userId);
     await createPaidBatch(org.id, 5000, 90);
     const fixture = await createCourseWithQuiz(5);
+    await completeLesson(token, fixture.course.id, fixture.lessonId, org.id);
 
     const idempotencyKey = `test-${randomUUID()}`;
     const first = await request(server)
@@ -568,6 +734,8 @@ describe('POST /courses/:id/quiz/submit', () => {
 
     const token = await tokenFor(user.id);
     const fixture = await createCourseWithQuiz(5);
+    await completeLesson(token, fixture.course.id, fixture.lessonId, orgA.id);
+    await completeLesson(token, fixture.course.id, fixture.lessonId, orgB.id);
 
     const resA = await request(server)
       .post(`/courses/${fixture.course.id}/quiz/submit`)

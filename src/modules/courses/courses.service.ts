@@ -4,6 +4,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { WalletsService } from '../wallets/wallets.service';
 import { CourseCreditService } from './course-credit.service';
 import { CourseAlreadyCompletedException } from './exceptions/course-already-completed.exception';
+import { QuizLessonsPendingException } from './exceptions/quiz-lessons-pending.exception';
 import { QuizRetryLockedException } from './exceptions/quiz-retry-locked.exception';
 import { SubmitQuizInput } from './dto/submit-quiz.schema';
 import { COURSE_COMPLETION_REWARD_COINS, PASSING_SCORE_PERCENT, RETRY_LOCKOUT_DAYS } from './courses.constants';
@@ -30,7 +31,8 @@ export interface CourseLessonView {
 }
 
 export interface QuizStateView {
-  state: 'AVAILABLE' | 'LOCKED' | 'APPROVED';
+  state: 'LESSONS_PENDING' | 'AVAILABLE' | 'LOCKED' | 'APPROVED';
+  pendingLessons: number | null;
   lockedUntil: string | null;
   approvedAt: string | null;
   scorePercent: number | null;
@@ -127,8 +129,11 @@ export class CoursesService {
       where: { membershipId, lessonId: { in: course.lessons.map((l) => l.id) } },
     });
     const completedLessonIds = new Set(lessonCompletions.map((lc) => lc.lessonId));
+    const pendingLessons = Math.max(course.lessons.length - completedLessonIds.size, 0);
 
-    const quiz = course.quiz ? await this.resolveQuizState(membershipId, courseId, course.quiz.id) : null;
+    const quiz = course.quiz
+      ? await this.resolveQuizState(membershipId, courseId, course.quiz.id, pendingLessons)
+      : null;
 
     return {
       id: course.id,
@@ -170,7 +175,7 @@ export class CoursesService {
   }
 
   async getQuiz(userId: string, organizationId: string, courseId: string): Promise<QuizView> {
-    await this.walletsService.resolveWalletId(userId, organizationId);
+    const { membershipId } = await this.walletsService.resolveWalletId(userId, organizationId);
 
     const quiz = await this.prisma.quiz.findFirst({
       where: { courseId, course: { status: 'PUBLISHED' } },
@@ -183,6 +188,11 @@ export class CoursesService {
     });
     if (!quiz) {
       throw new NotFoundException({ code: 'NOT_FOUND', message: 'Quiz não encontrado.' });
+    }
+
+    const pendingLessons = await this.countPendingLessons(membershipId, courseId);
+    if (pendingLessons > 0) {
+      throw new QuizLessonsPendingException(pendingLessons);
     }
 
     return {
@@ -222,6 +232,11 @@ export class CoursesService {
     });
     if (existingCompletion) {
       throw new CourseAlreadyCompletedException();
+    }
+
+    const pendingLessons = await this.countPendingLessons(membershipId, courseId);
+    if (pendingLessons > 0) {
+      throw new QuizLessonsPendingException(pendingLessons);
     }
 
     const lastAttempt = await this.prisma.quizAttempt.findFirst({
@@ -343,7 +358,23 @@ export class CoursesService {
     };
   }
 
-  private async resolveQuizState(membershipId: string, courseId: string, quizId: string): Promise<QuizStateView> {
+  /** Quantas aulas do curso a pessoa ainda não assistiu — recalculado sempre pelo estado
+   * atual (não um snapshot), porque a empresa pode adicionar aula nova a um curso já
+   * publicado a qualquer momento. */
+  private async countPendingLessons(membershipId: string, courseId: string): Promise<number> {
+    const [total, completed] = await Promise.all([
+      this.prisma.lesson.count({ where: { courseId } }),
+      this.prisma.lessonCompletion.count({ where: { membershipId, lesson: { courseId } } }),
+    ]);
+    return Math.max(total - completed, 0);
+  }
+
+  private async resolveQuizState(
+    membershipId: string,
+    courseId: string,
+    quizId: string,
+    pendingLessons: number,
+  ): Promise<QuizStateView> {
     const completion = await this.prisma.courseCompletion.findUnique({
       where: { courseId_membershipId: { courseId, membershipId } },
       include: { quizAttempt: true },
@@ -351,10 +382,15 @@ export class CoursesService {
     if (completion) {
       return {
         state: 'APPROVED',
+        pendingLessons: null,
         lockedUntil: null,
         approvedAt: completion.createdAt.toISOString(),
         scorePercent: completion.quizAttempt.scorePercent,
       };
+    }
+
+    if (pendingLessons > 0) {
+      return { state: 'LESSONS_PENDING', pendingLessons, lockedUntil: null, approvedAt: null, scorePercent: null };
     }
 
     const lastAttempt = await this.prisma.quizAttempt.findFirst({
@@ -365,11 +401,17 @@ export class CoursesService {
     if (lastAttempt && !lastAttempt.passed) {
       const lockedUntil = this.retryAvailableAt(lastAttempt.createdAt);
       if (lockedUntil > new Date()) {
-        return { state: 'LOCKED', lockedUntil: lockedUntil.toISOString(), approvedAt: null, scorePercent: null };
+        return {
+          state: 'LOCKED',
+          pendingLessons: null,
+          lockedUntil: lockedUntil.toISOString(),
+          approvedAt: null,
+          scorePercent: null,
+        };
       }
     }
 
-    return { state: 'AVAILABLE', lockedUntil: null, approvedAt: null, scorePercent: null };
+    return { state: 'AVAILABLE', pendingLessons: null, lockedUntil: null, approvedAt: null, scorePercent: null };
   }
 
   private isUniqueViolationOn(error: unknown, field: string): boolean {
