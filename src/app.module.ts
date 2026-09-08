@@ -21,6 +21,7 @@ import { PlatformOffersModule } from './modules/platform-admin/offers/platform-o
 import { PlatformDashboardModule } from './modules/platform-admin/dashboard/platform-dashboard.module';
 import { PlatformRedemptionsModule } from './modules/platform-admin/redemptions/platform-redemptions.module';
 import { PlatformBatchesModule } from './modules/platform-admin/batches/platform-batches.module';
+import { PlatformCoursesModule } from './modules/platform-admin/courses/platform-courses.module';
 import { OrganizationsModule } from './modules/organizations/organizations.module';
 import { UsersModule } from './modules/users/users.module';
 import { WalletsModule } from './modules/wallets/wallets.module';
@@ -34,6 +35,7 @@ import { PartnersModule } from './modules/partners/partners.module';
 import { OffersModule } from './modules/offers/offers.module';
 import { RedemptionsModule } from './modules/redemptions/redemptions.module';
 import { SpinsModule } from './modules/spins/spins.module';
+import { CoursesModule } from './modules/courses/courses.module';
 
 @Module({
   imports: [
@@ -72,6 +74,7 @@ import { SpinsModule } from './modules/spins/spins.module';
     PlatformDashboardModule,
     PlatformRedemptionsModule,
     PlatformBatchesModule,
+    PlatformCoursesModule,
     OrganizationsModule,
     UsersModule,
     WalletsModule,
@@ -85,6 +88,7 @@ import { SpinsModule } from './modules/spins/spins.module';
     OffersModule,
     RedemptionsModule,
     SpinsModule,
+    CoursesModule,
   ],
   providers: [
     { provide: APP_FILTER, useClass: AllExceptionsFilter },

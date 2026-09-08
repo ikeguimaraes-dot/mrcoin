@@ -1,7 +1,7 @@
 import { HttpException, Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
-import { CoinBatch, DistributionItem, LedgerEntry, Prisma } from '@prisma/client';
+import { DistributionItem, Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { encryptCpf, hashCpf } from '../../common/crypto/cpf-crypto.util';
 import { NOTIFICATION_PORT, NotificationPort } from '../../common/notifications/notification.port';
@@ -19,11 +19,10 @@ import {
   QUEUE_PROCESS_DISTRIBUTION,
 } from './distributions.constants';
 import { ensureUserMembershipWallet } from './ensure-user-membership-wallet.util';
+import { executeFifoPlan, planFifoOrThrow } from './fifo-batch-consumption.util';
 import { listDistributionItems } from './list-distribution-items.util';
 import { SAFE_DISTRIBUTION_ITEM_SELECT, SafeDistributionItem } from './safe-distribution-item.util';
 import { SAFE_DISTRIBUTION_SELECT, SafeDistribution } from './safe-distribution.util';
-
-type TransactionClient = Prisma.TransactionClient;
 
 interface ProcessDistributionJobData {
   distributionId: string;
@@ -43,11 +42,6 @@ export interface DistributeIndividualResult {
   item: SafeDistributionItem & { ledgerEntries: SafeLedgerEntry[] };
 }
 
-interface BatchConsumptionStep {
-  batch: CoinBatch;
-  amount: number;
-}
-
 /**
  * Distribuição individual: credita coins pra um CPF consumindo lotes em ordem FIFO (por
  * `expiresAt`) até completar o valor pedido — fraciona entre quantos lotes forem
@@ -56,9 +50,10 @@ interface BatchConsumptionStep {
  * `Distribution.idempotencyKey` é o único ponto checado pra replay — se encontrado, a
  * resposta já persistida é devolvida tal e qual, sem recalcular nem retocar nenhum lote.
  *
- * O planejamento/execução FIFO (`planFifoOrThrow`/`executeFifoPlan`) é compartilhado com a
- * distribuição em massa via CSV (`processBulkDistribution`) — mesma mecânica, um lote de
- * cada vez, só muda quem chama e em qual granularidade de transação.
+ * O planejamento/execução FIFO (`planFifoOrThrow`/`executeFifoPlan`, em
+ * `fifo-batch-consumption.util.ts`) é compartilhado com a distribuição em massa via CSV
+ * (`processBulkDistribution`) e, fora deste módulo, com o crédito de conclusão de curso
+ * (`CourseCreditService`) — mesma mecânica de sempre, um lote de cada vez.
  */
 @Injectable()
 export class DistributionsService {
@@ -98,7 +93,7 @@ export class DistributionsService {
     const cpfHash = hashCpf(input.cpf);
 
     const { distribution, item, userId } = await this.prisma.$transaction(async (tx) => {
-      const plan = await this.planFifoOrThrow(tx, organizationId, input.amount);
+      const plan = await planFifoOrThrow(tx, organizationId, input.amount);
 
       const { userId: ensuredUserId, membershipId, walletId } = await ensureUserMembershipWallet(tx, {
         cpfEncrypted: encryptCpf(input.cpf),
@@ -133,15 +128,15 @@ export class DistributionsService {
         select: SAFE_DISTRIBUTION_ITEM_SELECT,
       });
 
-      const ledgerEntries = await this.executeFifoPlan(
-        tx,
-        plan,
-        organizationId,
+      const description = input.reason ? `${DISTRIBUTION_DESCRIPTION} — ${input.reason}` : DISTRIBUTION_DESCRIPTION;
+      const ledgerEntries = await executeFifoPlan(tx, this.ledgerService, plan, organizationId, {
         walletId,
-        createdItem.id,
-        `distribution:${idempotencyKey}`,
-        input.reason,
-      );
+        referenceType: 'DISTRIBUTION',
+        referenceId: createdItem.id,
+        description,
+        distributionItemId: createdItem.id,
+        idempotencyKeyPrefix: `distribution:${idempotencyKey}`,
+      });
 
       return {
         distribution: createdDistribution,
@@ -153,80 +148,6 @@ export class DistributionsService {
     await this.notifyBestEffort(userId, input.amount);
 
     return { distribution, item };
-  }
-
-  /** Busca os lotes válidos e monta o plano de consumo FIFO, ou lança
-   * InsufficientCoinStockException — chamado ANTES de criar User/Membership/etc pra falhar
-   * rápido sem escrita desnecessária (tudo dentro da mesma transação de qualquer forma). */
-  private async planFifoOrThrow(
-    tx: TransactionClient,
-    organizationId: string,
-    amount: number,
-  ): Promise<BatchConsumptionStep[]> {
-    const candidates = await tx.coinBatch.findMany({
-      where: {
-        organizationId,
-        status: 'PAID',
-        remainingCoins: { gt: 0 },
-        expiresAt: { gt: new Date() },
-      },
-      orderBy: { expiresAt: 'asc' },
-    });
-
-    const plan = planFifoConsumption(candidates, amount);
-    if (!plan) {
-      const totalAvailable = candidates.reduce((sum, batch) => sum + batch.remainingCoins, 0);
-      throw new InsufficientCoinStockException(organizationId, amount, totalAvailable);
-    }
-
-    return plan;
-  }
-
-  /** Executa um plano já montado: decrementa cada lote com guarda otimista e posta um
-   * LedgerEntry por lote via LedgerService.post() (regra 1 do CLAUDE.md). Com `reason`,
-   * a description do entry carrega o motivo — senão fica só o texto padrão. */
-  private async executeFifoPlan(
-    tx: TransactionClient,
-    plan: BatchConsumptionStep[],
-    organizationId: string,
-    walletId: string,
-    distributionItemId: string,
-    idempotencyKeyPrefix: string,
-    reason?: string | null,
-  ): Promise<LedgerEntry[]> {
-    const ledgerEntries: LedgerEntry[] = [];
-    const description = reason ? `${DISTRIBUTION_DESCRIPTION} — ${reason}` : DISTRIBUTION_DESCRIPTION;
-
-    for (const step of plan) {
-      const decremented = await tx.coinBatch.updateMany({
-        where: { id: step.batch.id, remainingCoins: { gte: step.amount } },
-        data: { remainingCoins: { decrement: step.amount } },
-      });
-
-      if (decremented.count === 0) {
-        // Corrida: outra distribuição consumiu esse lote entre o planejamento e aqui.
-        throw new InsufficientCoinStockException(organizationId, step.amount, step.batch.remainingCoins);
-      }
-
-      const entry = await this.ledgerService.post(
-        {
-          walletId,
-          type: 'CREDIT',
-          amount: step.amount,
-          referenceType: 'DISTRIBUTION',
-          referenceId: distributionItemId,
-          description,
-          batchId: step.batch.id,
-          distributionItemId,
-          idempotencyKey: `${idempotencyKeyPrefix}:${step.batch.id}`,
-        },
-        tx,
-      );
-
-      ledgerEntries.push(entry);
-    }
-
-    return ledgerEntries;
   }
 
   private replayExisting(
@@ -387,7 +308,7 @@ export class DistributionsService {
               throw new Error('Linha PENDING sem dados de CPF completos — estado inconsistente.');
             }
 
-          const plan = await this.planFifoOrThrow(tx, organizationId, item.amount);
+          const plan = await planFifoOrThrow(tx, organizationId, item.amount);
 
           const { userId: ensuredUserId, membershipId, walletId } = await ensureUserMembershipWallet(tx, {
             cpfEncrypted: item.cpfEncrypted,
@@ -398,7 +319,14 @@ export class DistributionsService {
             externalRef: item.externalRef,
           });
 
-          await this.executeFifoPlan(tx, plan, organizationId, walletId, item.id, `distribution-item:${item.id}`);
+          await executeFifoPlan(tx, this.ledgerService, plan, organizationId, {
+            walletId,
+            referenceType: 'DISTRIBUTION',
+            referenceId: item.id,
+            description: DISTRIBUTION_DESCRIPTION,
+            distributionItemId: item.id,
+            idempotencyKeyPrefix: `distribution-item:${item.id}`,
+          });
 
           await tx.distributionItem.update({
             where: { id: item.id },
@@ -440,23 +368,6 @@ export class DistributionsService {
 
     this.logger.warn(`Linha ${item.id} da distribuição ${item.distributionId} falhou: ${message}`);
   }
-}
-
-/** Monta o plano FIFO: tira o mínimo entre "o que resta pedir" e "o que o lote tem" de
- * cada lote, na ordem dada (já vem ordenada por expiresAt asc), até fechar o valor total.
- * Retorna `null` se a soma de todos os candidatos não cobre o valor pedido. */
-function planFifoConsumption(candidates: CoinBatch[], amount: number): BatchConsumptionStep[] | null {
-  const plan: BatchConsumptionStep[] = [];
-  let remaining = amount;
-
-  for (const batch of candidates) {
-    if (remaining <= 0) break;
-    const take = Math.min(batch.remainingCoins, remaining);
-    plan.push({ batch, amount: take });
-    remaining -= take;
-  }
-
-  return remaining > 0 ? null : plan;
 }
 
 const PRISMA_TRANSACTION_TIMEOUT_ERROR_CODE = 'P2028';

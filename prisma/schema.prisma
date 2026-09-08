@@ -70,6 +70,7 @@ enum LedgerReferenceType {
   REVERSAL
   TRANSFER
   SPIN
+  COURSE_COMPLETION
 }
 
 enum SpinStatus {
@@ -134,6 +135,7 @@ enum SettlementStatus {
 enum JobName {
   RECONCILE_BALANCES
   VERIFY_HASH_CHAIN
+  CREDIT_COURSE_COMPLETIONS
 }
 
 enum JobRunStatus {
@@ -171,16 +173,17 @@ model Organization {
   createdAt       DateTime           @default(now())
   updatedAt       DateTime           @updatedAt
 
-  adminUsers      AdminUser[]
-  memberships     Membership[]
-  coinBatches     CoinBatch[]
-  distributions   Distribution[]
-  campaigns       Campaign[]
-  auditLogs       AuditLog[]
-  adminInvites    AdminInvite[]
-  conversionRates ConversionRate[]
-  spinGrants      SpinGrant[]
-  spins           Spin[]
+  adminUsers        AdminUser[]
+  memberships       Membership[]
+  coinBatches       CoinBatch[]
+  distributions     Distribution[]
+  campaigns         Campaign[]
+  auditLogs         AuditLog[]
+  adminInvites      AdminInvite[]
+  conversionRates   ConversionRate[]
+  spinGrants        SpinGrant[]
+  spins             Spin[]
+  courseCompletions CourseCompletion[]
 }
 
 /// Usuário do painel administrativo (coins-admin) de uma organização.
@@ -354,6 +357,9 @@ model Membership {
   receivedTransfers Transfer[]         @relation("TransferRecipient")
   spinGrants        SpinGrant[]
   spins             Spin[]
+  lessonCompletions LessonCompletion[]
+  quizAttempts      QuizAttempt[]
+  courseCompletions CourseCompletion[]
 
   @@unique([userId, organizationId])
   @@index([organizationId])
@@ -463,21 +469,21 @@ model LedgerEntry {
 /// preenchem (ausência = "pago pelo fluxo antigo", não dado faltando). Sem carimbo de tempo
 /// dedicado pra aprovação/rejeição — `updatedAt` já serve (o status só muda uma vez).
 model CoinBatch {
-  id                         String       @id @default(cuid())
-  organizationId             String
-  organization               Organization @relation(fields: [organizationId], references: [id])
-  totalCoins                 Int
-  remainingCoins             Int
-  priceInCents               Int
-  status                     BatchStatus  @default(PENDING)
-  expiresAt                  DateTime
-  pspChargeId                String?      @unique
-  idempotencyKey             String?      @unique
-  approvedByPlatformAdminId  String?
-  rejectedByPlatformAdminId  String?
-  rejectionReason            String?
-  createdAt                  DateTime     @default(now())
-  updatedAt                  DateTime     @updatedAt
+  id                        String       @id @default(cuid())
+  organizationId            String
+  organization              Organization @relation(fields: [organizationId], references: [id])
+  totalCoins                Int
+  remainingCoins            Int
+  priceInCents              Int
+  status                    BatchStatus  @default(PENDING)
+  expiresAt                 DateTime
+  pspChargeId               String?      @unique
+  idempotencyKey            String?      @unique
+  approvedByPlatformAdminId String?
+  rejectedByPlatformAdminId String?
+  rejectionReason           String?
+  createdAt                 DateTime     @default(now())
+  updatedAt                 DateTime     @updatedAt
 
   ledgerEntries LedgerEntry[]
   spins         Spin[]
@@ -518,23 +524,23 @@ model SpinGrant {
 /// padrão de CoinBatch.idempotencyKey): replay de POST /spins/redeem encontra o giro já
 /// resgatado por essa chave em vez de tentar consumir outro.
 model Spin {
-  id                    String     @id @default(cuid())
-  spinGrantId           String
-  spinGrant             SpinGrant  @relation(fields: [spinGrantId], references: [id])
-  organizationId        String
-  organization          Organization @relation(fields: [organizationId], references: [id])
-  membershipId          String
-  membership            Membership @relation(fields: [membershipId], references: [id])
-  reservedBatchId       String
-  reservedBatch         CoinBatch  @relation(fields: [reservedBatchId], references: [id], onDelete: Restrict)
-  status                SpinStatus @default(PENDING)
-  sectorIndex           Int?
-  coinsAwarded          Int?
-  ledgerEntryId         String?    @unique
-  redeemIdempotencyKey  String?    @unique
-  expiresAt             DateTime
-  redeemedAt            DateTime?
-  createdAt             DateTime   @default(now())
+  id                   String       @id @default(cuid())
+  spinGrantId          String
+  spinGrant            SpinGrant    @relation(fields: [spinGrantId], references: [id])
+  organizationId       String
+  organization         Organization @relation(fields: [organizationId], references: [id])
+  membershipId         String
+  membership           Membership   @relation(fields: [membershipId], references: [id])
+  reservedBatchId      String
+  reservedBatch        CoinBatch    @relation(fields: [reservedBatchId], references: [id], onDelete: Restrict)
+  status               SpinStatus   @default(PENDING)
+  sectorIndex          Int?
+  coinsAwarded         Int?
+  ledgerEntryId        String?      @unique
+  redeemIdempotencyKey String?      @unique
+  expiresAt            DateTime
+  redeemedAt           DateTime?
+  createdAt            DateTime     @default(now())
 
   @@index([membershipId, status, expiresAt])
   @@index([reservedBatchId])
@@ -548,13 +554,13 @@ model Spin {
 /// pra calcular preço). organizationId nullable: linhas antigas (taxa global, anterior ao
 /// modelo por-empresa) ficam órfãs, história preservada — nenhum código novo as consulta.
 model ConversionRate {
-  id             String        @id @default(cuid())
-  organizationId String?
-  organization   Organization? @relation(fields: [organizationId], references: [id])
+  id                 String        @id @default(cuid())
+  organizationId     String?
+  organization       Organization? @relation(fields: [organizationId], references: [id])
   /// Coins concedidos por R$ 1,00, × 100 (2 casas decimais, sem float — mesmo padrão de
   /// Partner.takeRateBps). Ex: 125 = 1,25 coins/real.
   coinsPerRealScaled Int
-  createdAt          DateTime @default(now())
+  createdAt          DateTime      @default(now())
 
   @@index([organizationId, createdAt])
 }
@@ -627,6 +633,161 @@ model Campaign {
   updatedAt          DateTime       @updatedAt
 
   @@index([organizationId])
+}
+
+enum CourseStatus {
+  DRAFT
+  PUBLISHED
+}
+
+enum CourseCreditStatus {
+  PENDING
+  CREDITED
+}
+
+/// Curso da mrcoin — conteúdo compartilhado por toda a plataforma, igual a Partner (sem
+/// organizationId). Só cursos PUBLISHED aparecem em GET /courses; DRAFT só existe pra
+/// plataforma editar via /platform/courses.
+model Course {
+  id            String       @id @default(cuid())
+  title         String
+  description   String
+  coverImageUrl String?
+  displayOrder  Int
+  status        CourseStatus @default(DRAFT)
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  lessons     Lesson[]
+  quiz        Quiz?
+  completions CourseCompletion[]
+
+  @@index([status, displayOrder])
+}
+
+/// videoUrl é genérico de propósito — hoje aponta pra um vídeo do YouTube não listado, mas o
+/// campo não valida nem assume provedor nenhum (só formato de URL).
+model Lesson {
+  id              String   @id @default(cuid())
+  courseId        String
+  course          Course   @relation(fields: [courseId], references: [id])
+  title           String
+  videoUrl        String
+  durationSeconds Int
+  displayOrder    Int
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  completions LessonCompletion[]
+
+  @@index([courseId, displayOrder])
+}
+
+/// "Assistida" é por Membership, não por User — a mesma pessoa em duas organizações tem
+/// progresso independente em cada uma (mesmo raciocínio do prêmio, pago pela empresa
+/// específica). onDelete Cascade aqui (ao contrário do ledger): perder o registro de "assisti
+/// essa aula" ao apagar a aula não é dado financeiro, não precisa da mesma rigidez de
+/// LedgerEntry.
+model LessonCompletion {
+  id           String     @id @default(cuid())
+  lessonId     String
+  lesson       Lesson     @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+  membershipId String
+  membership   Membership @relation(fields: [membershipId], references: [id])
+  completedAt  DateTime   @default(now())
+
+  @@unique([lessonId, membershipId])
+}
+
+/// Um quiz por curso. As questões/alternativas corretas (QuizOption.isCorrect) nunca saem em
+/// GET /courses/:id/quiz — só o servidor lê pra corrigir (POST .../quiz/submit).
+model Quiz {
+  id        String   @id @default(cuid())
+  courseId  String   @unique
+  course    Course   @relation(fields: [courseId], references: [id])
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  questions QuizQuestion[]
+  attempts  QuizAttempt[]
+}
+
+model QuizQuestion {
+  id           String   @id @default(cuid())
+  quizId       String
+  quiz         Quiz     @relation(fields: [quizId], references: [id])
+  prompt       String
+  displayOrder Int
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  options QuizOption[]
+
+  @@index([quizId, displayOrder])
+}
+
+model QuizOption {
+  id           String       @id @default(cuid())
+  questionId   String
+  question     QuizQuestion @relation(fields: [questionId], references: [id])
+  text         String
+  isCorrect    Boolean      @default(false)
+  displayOrder Int
+}
+
+/// Toda tentativa fica registrada, aprovada ou não — histórico + base do bloqueio de 7 dias
+/// (olha a tentativa mais recente REPROVADA de cada membership). `answers` é um snapshot leve
+/// (questionId → optionId escolhida) pra auditoria/suporte, não é reconsultado depois de
+/// corrigido.
+model QuizAttempt {
+  id             String     @id @default(cuid())
+  quizId         String
+  quiz           Quiz       @relation(fields: [quizId], references: [id])
+  membershipId   String
+  membership     Membership @relation(fields: [membershipId], references: [id])
+  scorePercent   Int
+  passed         Boolean
+  answers        Json
+  /// Idempotency-Key do POST /courses/:id/quiz/submit que criou esta tentativa — nullable+
+  /// unique (mesmo padrão de CoinBatch.idempotencyKey): retry de rede com a mesma chave
+  /// encontra esta linha em vez de gerar uma 2ª tentativa (o que contaria errado pro
+  /// bloqueio de 7 dias e poderia tentar creditar de novo).
+  idempotencyKey String?    @unique
+  createdAt      DateTime   @default(now())
+
+  completion CourseCompletion?
+
+  @@index([quizId, membershipId, createdAt])
+}
+
+/// UMA linha por (courseId, membershipId) — o unique constraint É o mecanismo que garante
+/// "só premia uma vez", inclusive sob corrida (duas submissões concorrentes aprovadas ao
+/// mesmo tempo: só uma cria a linha, a outra esbarra no unique e é tratada como replay, não
+/// erro — ver CoursesService). `creditStatus` nasce PENDING e só vira CREDITED quando
+/// LedgerService.post() de fato credita — se o estoque da organização estava insuficiente no
+/// momento da aprovação, fica PENDING até o job credit-course-completions conseguir (a
+/// aprovação em si nunca é perdida). `organizationId` denormalizado (via membership) só pra
+/// esse job não precisar de join a cada varredura. Sem `ledgerEntryId` de propósito: o
+/// crédito de 50 coins pode fracionar entre mais de um CoinBatch (mesmo caso raro que
+/// DistributionItem já tem — um lote com pouco saldo restante bem na hora do crédito), então
+/// pode gerar mais de um LedgerEntry; a ligação é via `LedgerEntry.referenceType =
+/// COURSE_COMPLETION` + `referenceId = CourseCompletion.id`, não uma FK única.
+model CourseCompletion {
+  id             String             @id @default(cuid())
+  courseId       String
+  course         Course             @relation(fields: [courseId], references: [id])
+  membershipId   String
+  membership     Membership         @relation(fields: [membershipId], references: [id])
+  organizationId String
+  organization   Organization       @relation(fields: [organizationId], references: [id])
+  quizAttemptId  String             @unique
+  quizAttempt    QuizAttempt        @relation(fields: [quizAttemptId], references: [id])
+  creditStatus   CourseCreditStatus @default(PENDING)
+  creditedAt     DateTime?
+  createdAt      DateTime           @default(now())
+
+  @@unique([courseId, membershipId])
+  @@index([organizationId, creditStatus, createdAt])
 }
 
 /// Parceiro da rede de resgate — compartilhado por todas as organizações

@@ -2,10 +2,13 @@ import { InjectQueue } from '@nestjs/bullmq';
 import { Injectable, OnModuleInit } from '@nestjs/common';
 import { Queue } from 'bullmq';
 import {
+  CRON_CREDIT_COURSE_COMPLETIONS,
   CRON_RECONCILE_BALANCES,
   CRON_VERIFY_HASH_CHAIN,
+  QUEUE_CREDIT_COURSE_COMPLETIONS,
   QUEUE_RECONCILE_BALANCES,
   QUEUE_VERIFY_HASH_CHAIN,
+  SCHEDULER_ID_CREDIT_COURSE_COMPLETIONS,
   SCHEDULER_ID_RECONCILE_BALANCES,
   SCHEDULER_ID_VERIFY_HASH_CHAIN,
 } from './jobs.constants';
@@ -16,6 +19,7 @@ export class JobsScheduler implements OnModuleInit {
   constructor(
     @InjectQueue(QUEUE_RECONCILE_BALANCES) private readonly reconcileQueue: Queue,
     @InjectQueue(QUEUE_VERIFY_HASH_CHAIN) private readonly verifyQueue: Queue,
+    @InjectQueue(QUEUE_CREDIT_COURSE_COMPLETIONS) private readonly creditCourseCompletionsQueue: Queue,
   ) {}
 
   async onModuleInit(): Promise<void> {
@@ -29,6 +33,12 @@ export class JobsScheduler implements OnModuleInit {
       SCHEDULER_ID_VERIFY_HASH_CHAIN,
       { pattern: CRON_VERIFY_HASH_CHAIN },
       { name: QUEUE_VERIFY_HASH_CHAIN },
+    );
+
+    await this.creditCourseCompletionsQueue.upsertJobScheduler(
+      SCHEDULER_ID_CREDIT_COURSE_COMPLETIONS,
+      { pattern: CRON_CREDIT_COURSE_COMPLETIONS },
+      { name: QUEUE_CREDIT_COURSE_COMPLETIONS },
     );
   }
 }
