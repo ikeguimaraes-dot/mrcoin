@@ -21,6 +21,7 @@ interface CourseSummaryBody {
 interface LessonBody {
   id: string;
   title: string;
+  thumbnailUrl: string | null;
 }
 
 interface QuizOptionAdminBody {
@@ -202,16 +203,34 @@ describe('CRUD completo — /platform/courses', () => {
     const lessonRes = await request(server)
       .post(`/platform/courses/${course.id}/lessons`)
       .set('Authorization', `Bearer ${token}`)
-      .send({ title: 'Aula 1', videoUrl: 'https://youtube.com/watch?v=unlisted', durationSeconds: 300, displayOrder: 0 })
+      .send({
+        title: 'Aula 1',
+        thumbnailUrl: 'https://example.com/thumb.png',
+        videoUrl: 'https://youtube.com/watch?v=unlisted',
+        durationSeconds: 300,
+        displayOrder: 0,
+      })
       .expect(201);
     const lesson = lessonRes.body as LessonBody;
+    expect(lesson.thumbnailUrl).toBe('https://example.com/thumb.png');
+
+    const detailAfterCreate = await request(server)
+      .get(`/platform/courses/${course.id}`)
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+    expect((detailAfterCreate.body as CourseDetailAdminBody).lessons[0]!.thumbnailUrl).toBe(
+      'https://example.com/thumb.png',
+    );
 
     const updateLessonRes = await request(server)
       .patch(`/platform/courses/${course.id}/lessons/${lesson.id}`)
       .set('Authorization', `Bearer ${token}`)
-      .send({ title: 'Aula 1 Revisada' })
+      .send({ title: 'Aula 1 Revisada', thumbnailUrl: null })
       .expect(200);
-    expect((updateLessonRes.body as LessonBody).title).toBe('Aula 1 Revisada');
+    const updatedLesson = updateLessonRes.body as LessonBody;
+    expect(updatedLesson.title).toBe('Aula 1 Revisada');
+    // null explícito remove a miniatura.
+    expect(updatedLesson.thumbnailUrl).toBeNull();
 
     await request(server)
       .delete(`/platform/courses/${course.id}/lessons/${lesson.id}`)

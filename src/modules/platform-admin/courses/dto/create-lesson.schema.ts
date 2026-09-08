@@ -1,9 +1,11 @@
 import { createZodDto } from 'nestjs-zod';
 import { z } from 'zod';
 
-/** videoUrl é genérico de propósito — só valida formato de URL, nunca assume provedor. */
+/** videoUrl/thumbnailUrl são genéricos de propósito — só validam formato de URL, nunca
+ * assumem provedor/CDN. */
 export const createLessonSchema = z.object({
   title: z.string().min(1),
+  thumbnailUrl: z.string().url().optional(),
   videoUrl: z.string().url(),
   durationSeconds: z.number().int().positive(),
   displayOrder: z.number().int(),

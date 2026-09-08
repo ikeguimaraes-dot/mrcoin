@@ -21,6 +21,7 @@ export class CourseListResponseDto extends createZodDto(courseListResponseSchema
 export const lessonAdminSchema = z.object({
   id: z.string(),
   title: z.string(),
+  thumbnailUrl: z.string().nullable(),
   videoUrl: z.string(),
   durationSeconds: z.number().int(),
   displayOrder: z.number().int(),

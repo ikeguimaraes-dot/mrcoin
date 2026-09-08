@@ -6,6 +6,7 @@ export const quizStateSchema = z.enum(['AVAILABLE', 'LOCKED', 'APPROVED']);
 export const courseLessonSchema = z.object({
   id: z.string(),
   title: z.string(),
+  thumbnailUrl: z.string().nullable(),
   videoUrl: z.string(),
   durationSeconds: z.number().int(),
   displayOrder: z.number().int(),

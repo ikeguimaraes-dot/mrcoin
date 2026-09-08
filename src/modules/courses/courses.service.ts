@@ -22,6 +22,7 @@ export interface CourseListItem {
 export interface CourseLessonView {
   id: string;
   title: string;
+  thumbnailUrl: string | null;
   videoUrl: string;
   durationSeconds: number;
   displayOrder: number;
@@ -137,6 +138,7 @@ export class CoursesService {
       lessons: course.lessons.map((lesson) => ({
         id: lesson.id,
         title: lesson.title,
+        thumbnailUrl: lesson.thumbnailUrl,
         videoUrl: lesson.videoUrl,
         durationSeconds: lesson.durationSeconds,
         displayOrder: lesson.displayOrder,

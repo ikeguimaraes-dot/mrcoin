@@ -72,7 +72,7 @@ export class PlatformCoursesService {
         ...COURSE_SELECT,
         lessons: {
           orderBy: { displayOrder: 'asc' },
-          select: { id: true, title: true, videoUrl: true, durationSeconds: true, displayOrder: true },
+          select: { id: true, title: true, thumbnailUrl: true, videoUrl: true, durationSeconds: true, displayOrder: true },
         },
         quiz: {
           select: {

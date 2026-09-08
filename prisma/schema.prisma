@@ -672,6 +672,7 @@ model Lesson {
   courseId        String
   course          Course   @relation(fields: [courseId], references: [id])
   title           String
+  thumbnailUrl    String?
   videoUrl        String
   durationSeconds Int
   displayOrder    Int

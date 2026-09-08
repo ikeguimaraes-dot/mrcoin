@@ -18,7 +18,7 @@ interface CourseListItemBody {
 
 interface CourseDetailBody {
   id: string;
-  lessons: { id: string; completed: boolean }[];
+  lessons: { id: string; thumbnailUrl: string | null; completed: boolean }[];
   quiz: { state: 'AVAILABLE' | 'LOCKED' | 'APPROVED'; lockedUntil: string | null; scorePercent: number | null } | null;
 }
 
@@ -249,6 +249,36 @@ describe('GET /courses', () => {
       .expect(200);
     const items = (res.body as { items: CourseListItemBody[] }).items;
     expect(items.some((i) => i.id === draft.id)).toBe(false);
+  });
+});
+
+describe('GET /courses/:id', () => {
+  it('aula devolve thumbnailUrl — com valor e com null', async () => {
+    const org = await createOrg();
+    const member = await createMember(org.id);
+    const token = await tokenFor(member.userId);
+    const fixture = await createCourseWithQuiz(1);
+
+    await prisma.lesson.update({
+      where: { id: fixture.lessonId },
+      data: { thumbnailUrl: 'https://example.com/thumb.png' },
+    });
+    const withThumbnail = await request(server)
+      .get(`/courses/${fixture.course.id}`)
+      .query({ organizationId: org.id })
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+    expect((withThumbnail.body as CourseDetailBody).lessons[0]).toMatchObject({
+      thumbnailUrl: 'https://example.com/thumb.png',
+    });
+
+    await prisma.lesson.update({ where: { id: fixture.lessonId }, data: { thumbnailUrl: null } });
+    const withoutThumbnail = await request(server)
+      .get(`/courses/${fixture.course.id}`)
+      .query({ organizationId: org.id })
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+    expect((withoutThumbnail.body as CourseDetailBody).lessons[0]).toMatchObject({ thumbnailUrl: null });
   });
 });
 
