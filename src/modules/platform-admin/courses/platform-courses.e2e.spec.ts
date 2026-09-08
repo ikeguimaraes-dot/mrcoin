@@ -79,6 +79,28 @@ function createCourseBody(overrides?: Partial<{ title: string; displayOrder: num
   };
 }
 
+/** Deixa o curso publicável: 1 aula + 1 questão de quiz — usado nos testes que precisam
+ * publicar de verdade, não nos que testam a validação de "não publicável". */
+async function addLessonAndQuestion(token: string, courseId: string): Promise<void> {
+  await request(server)
+    .post(`/platform/courses/${courseId}/lessons`)
+    .set('Authorization', `Bearer ${token}`)
+    .send({ title: 'Aula 1', videoUrl: 'https://youtube.com/watch?v=unlisted', durationSeconds: 300, displayOrder: 0 })
+    .expect(201);
+  await request(server)
+    .post(`/platform/courses/${courseId}/quiz/questions`)
+    .set('Authorization', `Bearer ${token}`)
+    .send({
+      prompt: 'Pergunta?',
+      displayOrder: 0,
+      options: [
+        { text: 'Certa', isCorrect: true, displayOrder: 0 },
+        { text: 'Errada', isCorrect: false, displayOrder: 1 },
+      ],
+    })
+    .expect(201);
+}
+
 beforeAll(async () => {
   const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
   app = moduleRef.createNestApplication();
@@ -140,11 +162,11 @@ describe('CRUD completo — /platform/courses', () => {
     const patchRes = await request(server)
       .patch(`/platform/courses/${created.id}`)
       .set('Authorization', `Bearer ${token}`)
-      .send({ title: 'Título Atualizado', status: 'PUBLISHED' })
+      .send({ title: 'Título Atualizado' })
       .expect(200);
     const patched = patchRes.body as CourseSummaryBody;
     expect(patched.title).toBe('Título Atualizado');
-    expect(patched.status).toBe('PUBLISHED');
+    expect(patched.status).toBe('DRAFT');
 
     const createLog = await prisma.platformAdminAuditLog.findFirst({
       where: { platformAdminId, action: 'COURSE_CREATED' },
@@ -314,6 +336,111 @@ describe('CRUD completo — /platform/courses', () => {
   });
 });
 
+describe('Regra de publicação — precisa de pelo menos 1 aula e 1 questão de quiz', () => {
+  it('publicar curso vazio (sem aula, sem quiz) retorna 422 COURSE_NOT_PUBLISHABLE listando os dois', async () => {
+    const { token } = await createPlatformAdminFixture();
+    const createRes = await request(server)
+      .post('/platform/courses')
+      .set('Authorization', `Bearer ${token}`)
+      .send(createCourseBody())
+      .expect(201);
+    const course = createRes.body as CourseSummaryBody;
+    createdCourseIds.push(course.id);
+
+    const res = await request(server)
+      .patch(`/platform/courses/${course.id}`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ status: 'PUBLISHED' })
+      .expect(422);
+    const body = res.body as { code: string; details?: { missing?: string[] } };
+    expect(body.code).toBe('COURSE_NOT_PUBLISHABLE');
+    expect(body.details?.missing?.sort()).toEqual(['lessons', 'quizQuestions']);
+
+    const unchanged = await prisma.course.findUniqueOrThrow({ where: { id: course.id } });
+    expect(unchanged.status).toBe('DRAFT');
+  });
+
+  it('publicar curso com aula mas sem questão de quiz retorna 422 listando só quizQuestions', async () => {
+    const { token } = await createPlatformAdminFixture();
+    const createRes = await request(server)
+      .post('/platform/courses')
+      .set('Authorization', `Bearer ${token}`)
+      .send(createCourseBody())
+      .expect(201);
+    const course = createRes.body as CourseSummaryBody;
+    createdCourseIds.push(course.id);
+
+    await request(server)
+      .post(`/platform/courses/${course.id}/lessons`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ title: 'Aula 1', videoUrl: 'https://youtube.com/watch?v=unlisted', durationSeconds: 300, displayOrder: 0 })
+      .expect(201);
+
+    const res = await request(server)
+      .patch(`/platform/courses/${course.id}`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ status: 'PUBLISHED' })
+      .expect(422);
+    const body = res.body as { code: string; details?: { missing?: string[] } };
+    expect(body.code).toBe('COURSE_NOT_PUBLISHABLE');
+    expect(body.details?.missing).toEqual(['quizQuestions']);
+  });
+
+  it('curso com aula e questão publica normalmente', async () => {
+    const { token } = await createPlatformAdminFixture();
+    const createRes = await request(server)
+      .post('/platform/courses')
+      .set('Authorization', `Bearer ${token}`)
+      .send(createCourseBody())
+      .expect(201);
+    const course = createRes.body as CourseSummaryBody;
+    createdCourseIds.push(course.id);
+    await addLessonAndQuestion(token, course.id);
+
+    const res = await request(server)
+      .patch(`/platform/courses/${course.id}`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ status: 'PUBLISHED' })
+      .expect(200);
+    expect((res.body as CourseSummaryBody).status).toBe('PUBLISHED');
+  });
+
+  it('despublicar (PUBLISHED → DRAFT) é sempre permitido, mesmo se o curso ficou sem aula/quiz depois de publicado', async () => {
+    const { token } = await createPlatformAdminFixture();
+    const createRes = await request(server)
+      .post('/platform/courses')
+      .set('Authorization', `Bearer ${token}`)
+      .send(createCourseBody())
+      .expect(201);
+    const course = createRes.body as CourseSummaryBody;
+    createdCourseIds.push(course.id);
+    await addLessonAndQuestion(token, course.id);
+
+    await request(server)
+      .patch(`/platform/courses/${course.id}`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ status: 'PUBLISHED' })
+      .expect(200);
+
+    // Remove a única aula depois de publicado — curso fica no ar e quebrado (cenário que
+    // justifica o admin precisar tirar do ar sem qualquer trava).
+    const detail = (
+      await request(server).get(`/platform/courses/${course.id}`).set('Authorization', `Bearer ${token}`).expect(200)
+    ).body as CourseDetailAdminBody;
+    await request(server)
+      .delete(`/platform/courses/${course.id}/lessons/${detail.lessons[0]!.id}`)
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+
+    const unpublishRes = await request(server)
+      .patch(`/platform/courses/${course.id}`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ status: 'DRAFT' })
+      .expect(200);
+    expect((unpublishRes.body as CourseSummaryBody).status).toBe('DRAFT');
+  });
+});
+
 describe('Publicar/despublicar reflete em GET /courses do funcionário', () => {
   it('curso DRAFT não aparece pro funcionário; PUBLISHED aparece; voltar pra DRAFT some de novo', async () => {
     const { token: adminToken } = await createPlatformAdminFixture();
@@ -324,6 +451,7 @@ describe('Publicar/despublicar reflete em GET /courses do funcionário', () => {
       .expect(201);
     const course = createRes.body as CourseSummaryBody;
     createdCourseIds.push(course.id);
+    await addLessonAndQuestion(adminToken, course.id);
 
     const suffix = randomUUID();
     const organization = await prisma.organization.create({

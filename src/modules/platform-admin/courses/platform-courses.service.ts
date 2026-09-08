@@ -7,6 +7,7 @@ import { CreateLessonInput } from './dto/create-lesson.schema';
 import { UpdateLessonInput } from './dto/update-lesson.schema';
 import { QuizQuestionInput } from './dto/quiz-question.schema';
 import { CourseNotFoundException } from './exceptions/course-not-found.exception';
+import { CourseNotPublishableException } from './exceptions/course-not-publishable.exception';
 import { LessonNotFoundException } from './exceptions/lesson-not-found.exception';
 import { QuizQuestionNotFoundException } from './exceptions/quiz-question-not-found.exception';
 
@@ -102,6 +103,12 @@ export class PlatformCoursesService {
 
   async update(platformAdminId: string, courseId: string, input: UpdateCourseInput, ip: string | undefined) {
     await this.getExistingOrThrow(courseId);
+
+    // Só valida ao PUBLICAR — despublicar (status: DRAFT) tem que ser sempre possível, sem
+    // trava nenhuma, pra dar pro admin tirar do ar na hora um curso com problema.
+    if (input.status === 'PUBLISHED') {
+      await this.ensurePublishable(courseId);
+    }
 
     const course = await this.prisma.course.update({ where: { id: courseId }, data: input, select: COURSE_SELECT });
 
@@ -256,6 +263,24 @@ export class PlatformCoursesService {
     const existing = await this.prisma.course.findUnique({ where: { id: courseId } });
     if (!existing) {
       throw new CourseNotFoundException();
+    }
+  }
+
+  /** Curso publicado sem aula ou sem questão quebra a experiência do funcionário (entra e não
+   * tem o que assistir, ou assiste e não tem prova pra ganhar o coin) — só chamado ao
+   * PUBLICAR, nunca ao despublicar. */
+  private async ensurePublishable(courseId: string): Promise<void> {
+    const [lessonCount, questionCount] = await Promise.all([
+      this.prisma.lesson.count({ where: { courseId } }),
+      this.prisma.quizQuestion.count({ where: { quiz: { courseId } } }),
+    ]);
+
+    const missing: ('lessons' | 'quizQuestions')[] = [];
+    if (lessonCount === 0) missing.push('lessons');
+    if (questionCount === 0) missing.push('quizQuestions');
+
+    if (missing.length > 0) {
+      throw new CourseNotPublishableException(missing);
     }
   }
 
