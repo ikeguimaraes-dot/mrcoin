@@ -7,4 +7,4 @@ export const tokenPairSchema = z.object({
   tokenType: z.literal('Bearer'),
   expiresIn: z.number().int(),
 });
-export class TokenPairDto extends createZodDto(tokenPairSchema) {}
+export class AdminTokenPairDto extends createZodDto(tokenPairSchema) {}

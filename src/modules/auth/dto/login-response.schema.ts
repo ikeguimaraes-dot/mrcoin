@@ -11,5 +11,5 @@ export const loginResponseSchema = z.discriminatedUnion('status', [
 // tipo da instância é uma união de objetos (exige objeto único ou interseção). Mesmo recurso
 // que o próprio nestjs-zod usa internamente pra .Output: cria a classe e renomeia via
 // defineProperty, já que o nome da classe interna vira o nome do schema no OpenAPI gerado.
-export const LoginResponseDto = createZodDto(loginResponseSchema);
-Object.defineProperty(LoginResponseDto, 'name', { value: 'LoginResponseDto' });
+export const AdminLoginResponseDto = createZodDto(loginResponseSchema);
+Object.defineProperty(AdminLoginResponseDto, 'name', { value: 'AdminLoginResponseDto' });

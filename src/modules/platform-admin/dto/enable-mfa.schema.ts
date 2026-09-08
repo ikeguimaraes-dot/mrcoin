@@ -6,4 +6,4 @@ export const enableMfaSchema = z.object({
 });
 
 export type EnableMfaInput = z.infer<typeof enableMfaSchema>;
-export class EnableMfaDto extends createZodDto(enableMfaSchema) {}
+export class PlatformAdminEnableMfaDto extends createZodDto(enableMfaSchema) {}

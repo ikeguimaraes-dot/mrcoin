@@ -12,18 +12,18 @@ import { MfaService } from './mfa.service';
 import { AdminDirectoryService } from './admin-directory.service';
 import { MfaChallengeGuard } from './guards/mfa-challenge.guard';
 import { MfaSetupGuard } from './guards/mfa-setup.guard';
-import { LoginDto, loginSchema } from './dto/login.schema';
-import { VerifyMfaDto, verifyMfaSchema } from './dto/verify-mfa.schema';
-import { EnableMfaDto, enableMfaSchema } from './dto/enable-mfa.schema';
-import { RefreshDto, refreshSchema } from './dto/refresh.schema';
-import { LogoutDto, logoutSchema } from './dto/logout.schema';
+import { AdminLoginDto, loginSchema } from './dto/login.schema';
+import { AdminVerifyMfaDto, verifyMfaSchema } from './dto/verify-mfa.schema';
+import { AdminEnableMfaDto, enableMfaSchema } from './dto/enable-mfa.schema';
+import { AdminRefreshDto, refreshSchema } from './dto/refresh.schema';
+import { AdminLogoutDto, logoutSchema } from './dto/logout.schema';
 import { ListAdminsQueryDto, listAdminsQuerySchema } from './dto/list-admins.schema';
 import { RequestMeta } from './token.service';
-import { TokenPairDto } from './dto/token-pair.schema';
-import { MfaSetupResponseDto } from './dto/mfa-setup-response.schema';
+import { AdminTokenPairDto } from './dto/token-pair.schema';
+import { AdminMfaSetupResponseDto } from './dto/mfa-setup-response.schema';
 import { AdminProfileDto } from './dto/admin-summary.schema';
 import { ListAdminsResponseDto } from './dto/list-admins-response.schema';
-import { LoginResponseDto } from './dto/login-response.schema';
+import { AdminLoginResponseDto } from './dto/login-response.schema';
 
 function requestMeta(request: Request): RequestMeta {
   return { ip: request.ip, userAgent: request.headers['user-agent'] };
@@ -42,8 +42,8 @@ export class AuthController {
   @UseGuards(LoginRateLimitGuard)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Login de AdminUser (e-mail + senha)' })
-  @ApiOkResponse({ type: LoginResponseDto })
-  login(@Body(new ZodValidationPipe(loginSchema)) body: LoginDto, @Req() request: Request) {
+  @ApiOkResponse({ type: AdminLoginResponseDto })
+  login(@Body(new ZodValidationPipe(loginSchema)) body: AdminLoginDto, @Req() request: Request) {
     return this.authService.login(body.email, body.password, requestMeta(request));
   }
 
@@ -51,7 +51,7 @@ export class AuthController {
   @UseGuards(MfaSetupGuard)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Gera secret TOTP + QR code para configurar MFA' })
-  @ApiOkResponse({ type: MfaSetupResponseDto })
+  @ApiOkResponse({ type: AdminMfaSetupResponseDto })
   mfaSetup(@Req() request: Request) {
     return this.mfaService.setup(request.mfaSetupAdminId as string);
   }
@@ -60,8 +60,8 @@ export class AuthController {
   @UseGuards(MfaSetupGuard)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Confirma o primeiro código TOTP e ativa o MFA' })
-  @ApiOkResponse({ type: TokenPairDto })
-  mfaEnable(@Body(new ZodValidationPipe(enableMfaSchema)) body: EnableMfaDto, @Req() request: Request) {
+  @ApiOkResponse({ type: AdminTokenPairDto })
+  mfaEnable(@Body(new ZodValidationPipe(enableMfaSchema)) body: AdminEnableMfaDto, @Req() request: Request) {
     return this.authService.completeMfaSetup(
       request.mfaSetupAdminId as string,
       body.code,
@@ -73,8 +73,8 @@ export class AuthController {
   @UseGuards(MfaChallengeGuard)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Completa o login verificando o código TOTP' })
-  @ApiOkResponse({ type: TokenPairDto })
-  mfaVerify(@Body(new ZodValidationPipe(verifyMfaSchema)) body: VerifyMfaDto, @Req() request: Request) {
+  @ApiOkResponse({ type: AdminTokenPairDto })
+  mfaVerify(@Body(new ZodValidationPipe(verifyMfaSchema)) body: AdminVerifyMfaDto, @Req() request: Request) {
     return this.authService.completeMfaLogin(
       request.mfaChallengeAdminId as string,
       body.code,
@@ -85,15 +85,15 @@ export class AuthController {
   @Post('refresh')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Rotaciona o refresh token (detecta reuso)' })
-  @ApiOkResponse({ type: TokenPairDto })
-  refresh(@Body(new ZodValidationPipe(refreshSchema)) body: RefreshDto, @Req() request: Request) {
+  @ApiOkResponse({ type: AdminTokenPairDto })
+  refresh(@Body(new ZodValidationPipe(refreshSchema)) body: AdminRefreshDto, @Req() request: Request) {
     return this.authService.refresh(body.refreshToken, requestMeta(request));
   }
 
   @Post('logout')
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Revoga o refresh token informado' })
-  async logout(@Body(new ZodValidationPipe(logoutSchema)) body: LogoutDto): Promise<void> {
+  async logout(@Body(new ZodValidationPipe(logoutSchema)) body: AdminLogoutDto): Promise<void> {
     await this.authService.logout(body.refreshToken);
   }
 

@@ -6,4 +6,4 @@ export const refreshSchema = z.object({
 });
 
 export type RefreshInput = z.infer<typeof refreshSchema>;
-export class RefreshDto extends createZodDto(refreshSchema) {}
+export class PlatformAdminRefreshDto extends createZodDto(refreshSchema) {}

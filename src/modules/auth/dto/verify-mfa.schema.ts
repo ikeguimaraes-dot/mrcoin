@@ -6,4 +6,4 @@ export const verifyMfaSchema = z.object({
 });
 
 export type VerifyMfaInput = z.infer<typeof verifyMfaSchema>;
-export class VerifyMfaDto extends createZodDto(verifyMfaSchema) {}
+export class AdminVerifyMfaDto extends createZodDto(verifyMfaSchema) {}

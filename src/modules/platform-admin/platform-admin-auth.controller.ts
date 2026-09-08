@@ -12,14 +12,14 @@ import { PlatformAdminJwtPayload } from '../../common/guards/jwt-payload.types';
 import { PlatformAdminAuthService } from './platform-admin-auth.service';
 import { PlatformAdminMfaService } from './platform-admin-mfa.service';
 import { RequestMeta } from './platform-admin-token.service';
-import { LoginDto, loginSchema } from './dto/login.schema';
-import { VerifyMfaDto, verifyMfaSchema } from './dto/verify-mfa.schema';
-import { EnableMfaDto, enableMfaSchema } from './dto/enable-mfa.schema';
-import { RefreshDto, refreshSchema } from './dto/refresh.schema';
-import { LogoutDto, logoutSchema } from './dto/logout.schema';
-import { TokenPairDto } from './dto/token-pair.schema';
-import { MfaSetupResponseDto } from './dto/mfa-setup-response.schema';
-import { LoginResponseDto } from './dto/login-response.schema';
+import { PlatformAdminLoginDto, loginSchema } from './dto/login.schema';
+import { PlatformAdminVerifyMfaDto, verifyMfaSchema } from './dto/verify-mfa.schema';
+import { PlatformAdminEnableMfaDto, enableMfaSchema } from './dto/enable-mfa.schema';
+import { PlatformAdminRefreshDto, refreshSchema } from './dto/refresh.schema';
+import { PlatformAdminLogoutDto, logoutSchema } from './dto/logout.schema';
+import { PlatformAdminTokenPairDto } from './dto/token-pair.schema';
+import { PlatformAdminMfaSetupResponseDto } from './dto/mfa-setup-response.schema';
+import { PlatformAdminLoginResponseDto } from './dto/login-response.schema';
 import { PlatformAdminProfileDto } from './dto/profile.schema';
 
 function requestMeta(request: Request): RequestMeta {
@@ -38,8 +38,8 @@ export class PlatformAdminAuthController {
   @UseGuards(PlatformAdminLoginRateLimitGuard)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Login de PlatformAdmin (e-mail + senha) — MFA sempre obrigatório' })
-  @ApiOkResponse({ type: LoginResponseDto })
-  login(@Body(new ZodValidationPipe(loginSchema)) body: LoginDto, @Req() request: Request) {
+  @ApiOkResponse({ type: PlatformAdminLoginResponseDto })
+  login(@Body(new ZodValidationPipe(loginSchema)) body: PlatformAdminLoginDto, @Req() request: Request) {
     return this.authService.login(body.email, body.password, requestMeta(request));
   }
 
@@ -47,7 +47,7 @@ export class PlatformAdminAuthController {
   @UseGuards(PlatformMfaSetupGuard, PlatformAdminMfaRateLimitGuard)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Gera secret TOTP + QR code para configurar MFA' })
-  @ApiOkResponse({ type: MfaSetupResponseDto })
+  @ApiOkResponse({ type: PlatformAdminMfaSetupResponseDto })
   mfaSetup(@Req() request: Request) {
     return this.mfaService.setup(request.platformMfaSetupId as string);
   }
@@ -56,8 +56,8 @@ export class PlatformAdminAuthController {
   @UseGuards(PlatformMfaSetupGuard, PlatformAdminMfaRateLimitGuard)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Confirma o primeiro código TOTP e ativa o MFA' })
-  @ApiOkResponse({ type: TokenPairDto })
-  mfaEnable(@Body(new ZodValidationPipe(enableMfaSchema)) body: EnableMfaDto, @Req() request: Request) {
+  @ApiOkResponse({ type: PlatformAdminTokenPairDto })
+  mfaEnable(@Body(new ZodValidationPipe(enableMfaSchema)) body: PlatformAdminEnableMfaDto, @Req() request: Request) {
     return this.authService.completeMfaSetup(
       request.platformMfaSetupId as string,
       body.code,
@@ -69,8 +69,8 @@ export class PlatformAdminAuthController {
   @UseGuards(PlatformMfaChallengeGuard, PlatformAdminMfaRateLimitGuard)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Completa o login verificando o código TOTP' })
-  @ApiOkResponse({ type: TokenPairDto })
-  mfaVerify(@Body(new ZodValidationPipe(verifyMfaSchema)) body: VerifyMfaDto, @Req() request: Request) {
+  @ApiOkResponse({ type: PlatformAdminTokenPairDto })
+  mfaVerify(@Body(new ZodValidationPipe(verifyMfaSchema)) body: PlatformAdminVerifyMfaDto, @Req() request: Request) {
     return this.authService.completeMfaLogin(
       request.platformMfaChallengeId as string,
       body.code,
@@ -81,15 +81,15 @@ export class PlatformAdminAuthController {
   @Post('refresh')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Rotaciona o refresh token (detecta reuso)' })
-  @ApiOkResponse({ type: TokenPairDto })
-  refresh(@Body(new ZodValidationPipe(refreshSchema)) body: RefreshDto, @Req() request: Request) {
+  @ApiOkResponse({ type: PlatformAdminTokenPairDto })
+  refresh(@Body(new ZodValidationPipe(refreshSchema)) body: PlatformAdminRefreshDto, @Req() request: Request) {
     return this.authService.refresh(body.refreshToken, requestMeta(request));
   }
 
   @Post('logout')
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Revoga o refresh token informado' })
-  async logout(@Body(new ZodValidationPipe(logoutSchema)) body: LogoutDto): Promise<void> {
+  async logout(@Body(new ZodValidationPipe(logoutSchema)) body: PlatformAdminLogoutDto): Promise<void> {
     await this.authService.logout(body.refreshToken);
   }
 

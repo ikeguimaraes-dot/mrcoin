@@ -12,4 +12,4 @@ export const loginSchema = z.object({
 });
 
 export type LoginInput = z.infer<typeof loginSchema>;
-export class LoginDto extends createZodDto(loginSchema) {}
+export class UserLoginDto extends createZodDto(loginSchema) {}

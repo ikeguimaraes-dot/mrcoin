@@ -6,4 +6,4 @@ export const logoutSchema = z.object({
 });
 
 export type LogoutInput = z.infer<typeof logoutSchema>;
-export class LogoutDto extends createZodDto(logoutSchema) {}
+export class AdminLogoutDto extends createZodDto(logoutSchema) {}

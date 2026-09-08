@@ -3,7 +3,7 @@ import { ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Request } from 'express';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe';
 import { RefreshTokenDto, refreshTokenSchema } from './dto/refresh-token.schema';
-import { LogoutDto, logoutSchema } from './dto/logout.schema';
+import { UserLogoutDto, logoutSchema } from './dto/logout.schema';
 import { UserTokenPairResponseDto } from './dto/otp-response.schema';
 import { RequestMeta, UserTokenService } from './user-token.service';
 
@@ -27,7 +27,7 @@ export class RefreshController {
   @Post('logout')
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Revoga o refresh token informado' })
-  async logout(@Body(new ZodValidationPipe(logoutSchema)) body: LogoutDto): Promise<void> {
+  async logout(@Body(new ZodValidationPipe(logoutSchema)) body: UserLogoutDto): Promise<void> {
     await this.userTokenService.revokeRefreshToken(body.refreshToken);
   }
 }

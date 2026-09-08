@@ -8,5 +8,5 @@ export const loginResponseSchema = z.discriminatedUnion('status', [
   z.object({ status: z.literal('MFA_REQUIRED'), mfaChallengeToken: z.string() }),
   z.object({ status: z.literal('MFA_SETUP_REQUIRED'), mfaChallengeToken: z.string() }),
 ]);
-export const LoginResponseDto = createZodDto(loginResponseSchema);
-Object.defineProperty(LoginResponseDto, 'name', { value: 'PlatformAdminLoginResponseDto' });
+export const PlatformAdminLoginResponseDto = createZodDto(loginResponseSchema);
+Object.defineProperty(PlatformAdminLoginResponseDto, 'name', { value: 'PlatformAdminLoginResponseDto' });

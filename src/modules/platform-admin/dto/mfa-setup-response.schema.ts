@@ -6,4 +6,4 @@ export const mfaSetupResponseSchema = z.object({
   otpauthUrl: z.string(),
   qrCodeDataUrl: z.string(),
 });
-export class MfaSetupResponseDto extends createZodDto(mfaSetupResponseSchema) {}
+export class PlatformAdminMfaSetupResponseDto extends createZodDto(mfaSetupResponseSchema) {}
