@@ -7,9 +7,11 @@ import { DistributionsCsvService } from './distributions-csv.service';
 import { ProcessDistributionProcessor } from './process-distribution.processor';
 import { QUEUE_PROCESS_DISTRIBUTION } from './distributions.constants';
 
+const runtimeProviders = process.env.NODE_ENV === 'test' ? [] : [ProcessDistributionProcessor];
+
 @Module({
   imports: [LedgerModule, BullModule.registerQueue({ name: QUEUE_PROCESS_DISTRIBUTION })],
   controllers: [DistributionsController],
-  providers: [DistributionsService, DistributionsCsvService, ProcessDistributionProcessor],
+  providers: [DistributionsService, DistributionsCsvService, ...runtimeProviders],
 })
 export class DistributionsModule {}

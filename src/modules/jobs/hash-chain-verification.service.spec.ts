@@ -1,20 +1,34 @@
 import { randomUUID } from 'node:crypto';
+import type { Job } from 'bullmq';
 import { PrismaService } from '../../prisma/prisma.service';
 import { LedgerService } from '../ledger/ledger.service';
 import { DEFAULT_COINS_PER_REAL_SCALED } from '../settings/settings.constants';
 import { JobRunRecorderService } from './job-run-recorder.service';
 import { HashChainVerificationService } from './hash-chain-verification.service';
+import { VerifyHashChainProcessor } from './verify-hash-chain.processor';
 import { HashChainIssue, JobRunDetails } from './job-run.types';
 
 const prisma = new PrismaService();
 const ledgerService = new LedgerService(prisma);
-const hashChainVerificationService = new HashChainVerificationService(
-  prisma,
-  new JobRunRecorderService(prisma),
-);
-
 const createdWalletIds: string[] = [];
 const createdJobRunIds: string[] = [];
+
+// O job de produção varre todas as wallets. O spec usa o banco de integração compartilhado,
+// então restringimos apenas a página inicial às fixtures deste arquivo; leituras e escritas
+// continuam passando pelo Prisma real.
+const scopedPrisma = {
+  wallet: {
+    findMany: (args: Parameters<typeof prisma.wallet.findMany>[0]) =>
+      prisma.wallet.findMany({ ...args, where: { id: { in: createdWalletIds } } }),
+  },
+  ledgerEntry: prisma.ledgerEntry,
+} as unknown as PrismaService;
+const hashChainVerificationService = new HashChainVerificationService(
+  scopedPrisma,
+  new JobRunRecorderService(prisma),
+);
+const processor = new VerifyHashChainProcessor(hashChainVerificationService);
+const controlledJob = {} as Job;
 
 async function createWalletFixture(): Promise<string> {
   const suffix = randomUUID();
@@ -62,7 +76,7 @@ function post(walletId: string, type: 'CREDIT' | 'DEBIT' | 'EXPIRE', amount: num
 }
 
 async function runVerificationAndGetIssues(): Promise<HashChainIssue[]> {
-  await hashChainVerificationService.run();
+  await processor.process(controlledJob);
 
   const jobRun = await prisma.jobRun.findFirstOrThrow({
     where: { jobName: 'VERIFY_HASH_CHAIN' },

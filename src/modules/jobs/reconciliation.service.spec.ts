@@ -1,17 +1,34 @@
 import { randomUUID } from 'node:crypto';
+import type { Job } from 'bullmq';
 import { PrismaService } from '../../prisma/prisma.service';
 import { LedgerService } from '../ledger/ledger.service';
 import { DEFAULT_COINS_PER_REAL_SCALED } from '../settings/settings.constants';
 import { JobRunRecorderService } from './job-run-recorder.service';
 import { ReconciliationService } from './reconciliation.service';
+import { ReconcileBalancesProcessor } from './reconcile-balances.processor';
 import { BalanceMismatchIssue, JobRunDetails } from './job-run.types';
 
 const prisma = new PrismaService();
 const ledgerService = new LedgerService(prisma);
-const reconciliationService = new ReconciliationService(prisma, new JobRunRecorderService(prisma));
-
 const createdWalletIds: string[] = [];
 const createdJobRunIds: string[] = [];
+
+// O job de produção varre todas as wallets. No banco de integração compartilhado isso torna um
+// spec não determinístico e pode ultrapassar o timeout. Mantemos Prisma real, mas limitamos a
+// página de entrada às fixtures deste arquivo.
+const scopedPrisma = {
+  wallet: {
+    findMany: (args: Parameters<typeof prisma.wallet.findMany>[0]) =>
+      prisma.wallet.findMany({ ...args, where: { id: { in: createdWalletIds } } }),
+  },
+  ledgerEntry: prisma.ledgerEntry,
+} as unknown as PrismaService;
+const reconciliationService = new ReconciliationService(
+  scopedPrisma,
+  new JobRunRecorderService(prisma),
+);
+const processor = new ReconcileBalancesProcessor(reconciliationService);
+const controlledJob = {} as Job;
 
 async function createWalletFixture(): Promise<string> {
   const suffix = randomUUID();
@@ -59,7 +76,7 @@ function post(walletId: string, type: 'CREDIT' | 'DEBIT' | 'EXPIRE', amount: num
 }
 
 async function runReconciliationAndGetIssues(): Promise<BalanceMismatchIssue[]> {
-  await reconciliationService.run();
+  await processor.process(controlledJob);
 
   const jobRun = await prisma.jobRun.findFirstOrThrow({
     where: { jobName: 'RECONCILE_BALANCES' },
@@ -125,7 +142,7 @@ describe('ReconciliationService', () => {
 
   it('grava um JobRun com status SUCCESS ao final da execução', async () => {
     await createWalletFixture();
-    await reconciliationService.run();
+    await processor.process(controlledJob);
 
     const jobRun = await prisma.jobRun.findFirstOrThrow({
       where: { jobName: 'RECONCILE_BALANCES' },

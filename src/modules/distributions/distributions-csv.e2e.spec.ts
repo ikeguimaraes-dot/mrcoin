@@ -4,12 +4,15 @@ import { INestApplication } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { Test } from '@nestjs/testing';
 import { AdminRole, CoinBatch, Distribution, DistributionItem } from '@prisma/client';
+import type { Job } from 'bullmq';
 import request from 'supertest';
 import { AppModule } from '../../app.module';
 import { PrismaService } from '../../prisma/prisma.service';
 import { hashPassword } from '../auth/password.util';
 import { TokenService } from '../auth/token.service';
 import { DEFAULT_COINS_PER_REAL_SCALED } from '../settings/settings.constants';
+import { DistributionsService } from './distributions.service';
+import { ProcessDistributionProcessor } from './process-distribution.processor';
 
 interface GetDistributionResponseBody {
   distribution: Distribution;
@@ -32,6 +35,7 @@ const createdUserIds: string[] = [];
 
 let app: INestApplication;
 let server: Server;
+let processor: ProcessDistributionProcessor;
 
 interface AdminFixture {
   adminId: string;
@@ -46,7 +50,10 @@ function randomCpf(): string {
 async function createAdmin(role: AdminRole): Promise<AdminFixture> {
   const suffix = randomUUID();
   const organization = await prisma.organization.create({
-    data: { name: `CSV Distributions Test Org ${suffix}`, cnpj: suffix.replace(/-/g, '').slice(0, 14) },
+    data: {
+      name: `CSV Distributions Test Org ${suffix}`,
+      cnpj: suffix.replace(/-/g, '').slice(0, 14),
+    },
   });
   createdOrgIds.push(organization.id);
   await prisma.conversionRate.create({
@@ -68,10 +75,18 @@ async function createAdmin(role: AdminRole): Promise<AdminFixture> {
 }
 
 function tokenFor(admin: AdminFixture): Promise<string> {
-  return tokenService.issueAccessToken({ id: admin.adminId, organizationId: admin.organizationId, role: admin.role });
+  return tokenService.issueAccessToken({
+    id: admin.adminId,
+    organizationId: admin.organizationId,
+    role: admin.role,
+  });
 }
 
-async function createPaidBatch(organizationId: string, remainingCoins: number, expiresInDays: number): Promise<CoinBatch> {
+async function createPaidBatch(
+  organizationId: string,
+  remainingCoins: number,
+  expiresInDays: number,
+): Promise<CoinBatch> {
   return prisma.coinBatch.create({
     data: {
       organizationId,
@@ -90,14 +105,21 @@ function csvOf(rows: string[]): string {
 
 async function trackUsersFromItems(items: DistributionItem[]): Promise<void> {
   const memberships = await prisma.membership.findMany({
-    where: { id: { in: items.map((item) => item.membershipId).filter((id): id is string => Boolean(id)) } },
+    where: {
+      id: { in: items.map((item) => item.membershipId).filter((id): id is string => Boolean(id)) },
+    },
   });
   for (const membership of memberships) {
     createdUserIds.push(membership.userId);
   }
 }
 
-async function pollUntilDone(server: Server, token: string, distributionId: string, timeoutMs: number): Promise<Distribution> {
+async function pollUntilDone(
+  server: Server,
+  token: string,
+  distributionId: string,
+  timeoutMs: number,
+): Promise<Distribution> {
   const deadline = Date.now() + timeoutMs;
 
   for (;;) {
@@ -112,11 +134,17 @@ async function pollUntilDone(server: Server, token: string, distributionId: stri
     }
 
     if (Date.now() > deadline) {
-      throw new Error(`Timeout esperando distribuição ${distributionId} terminar (status: ${body.distribution.status})`);
+      throw new Error(
+        `Timeout esperando distribuição ${distributionId} terminar (status: ${body.distribution.status})`,
+      );
     }
 
     await new Promise((resolve) => setTimeout(resolve, 300));
   }
+}
+
+function processDistribution(distributionId: string): Promise<void> {
+  return processor.process({ data: { distributionId } } as Job<{ distributionId: string }>);
 }
 
 beforeAll(async () => {
@@ -124,18 +152,25 @@ beforeAll(async () => {
   app = moduleRef.createNestApplication();
   await app.init();
   server = app.getHttpServer() as Server;
+  processor = new ProcessDistributionProcessor(app.get(DistributionsService));
 }, 30000);
 
 afterAll(async () => {
   await app.close();
   const users = await prisma.user.findMany({ where: { id: { in: createdUserIds } } });
-  const memberships = await prisma.membership.findMany({ where: { userId: { in: users.map((u) => u.id) } } });
-  const wallets = await prisma.wallet.findMany({ where: { membershipId: { in: memberships.map((m) => m.id) } } });
+  const memberships = await prisma.membership.findMany({
+    where: { userId: { in: users.map((u) => u.id) } },
+  });
+  const wallets = await prisma.wallet.findMany({
+    where: { membershipId: { in: memberships.map((m) => m.id) } },
+  });
   const walletIds = wallets.map((w) => w.id);
 
   await prisma.auditLog.deleteMany({ where: { organizationId: { in: createdOrgIds } } });
   await prisma.ledgerEntry.deleteMany({ where: { walletId: { in: walletIds } } });
-  await prisma.distributionItem.deleteMany({ where: { distribution: { organizationId: { in: createdOrgIds } } } });
+  await prisma.distributionItem.deleteMany({
+    where: { distribution: { organizationId: { in: createdOrgIds } } },
+  });
   await prisma.distribution.deleteMany({ where: { organizationId: { in: createdOrgIds } } });
   await prisma.wallet.deleteMany({ where: { id: { in: walletIds } } });
   await prisma.membership.deleteMany({ where: { userId: { in: users.map((u) => u.id) } } });
@@ -249,7 +284,9 @@ describe('POST /admin/distributions/csv — upload e validação prévia', () =>
     const secondBody = second.body as GetDistributionResponseBody;
     expect(secondBody.distribution.id).toBe(firstBody.distribution.id);
 
-    const itemCount = await prisma.distributionItem.count({ where: { distributionId: firstBody.distribution.id } });
+    const itemCount = await prisma.distributionItem.count({
+      where: { distributionId: firstBody.distribution.id },
+    });
     expect(itemCount).toBe(2);
   });
 
@@ -297,6 +334,7 @@ describe('POST /admin/distributions/:id/confirm', () => {
 
     expect((second.body as ErrorResponseBody).code).toBe('DISTRIBUTION_NOT_PENDING');
 
+    await processDistribution(distributionId);
     const finalDistribution = await pollUntilDone(server, ownerToken, distributionId, 15000);
     expect(finalDistribution.status).toBe('COMPLETED');
     const items = await prisma.distributionItem.findMany({ where: { distributionId } });
@@ -366,6 +404,7 @@ describe('fluxo completo: upload -> confirm -> processamento -> minimização de
       .set('Authorization', `Bearer ${ownerToken}`)
       .expect(201);
 
+    await processDistribution(distributionId);
     const finalDistribution = await pollUntilDone(server, ownerToken, distributionId, 15000);
     expect(finalDistribution.status).toBe('COMPLETED_WITH_ERRORS');
     expect(finalDistribution.successItems).toBe(1);
@@ -434,6 +473,7 @@ describe('CSV de 1.000 linhas com erros propositais', () => {
       .set('Authorization', `Bearer ${ownerToken}`)
       .expect(201);
 
+    await processDistribution(distributionId);
     const finalDistribution = await pollUntilDone(server, ownerToken, distributionId, 240_000);
 
     expect(finalDistribution.status).toBe('COMPLETED_WITH_ERRORS');
@@ -441,11 +481,17 @@ describe('CSV de 1.000 linhas com erros propositais', () => {
     expect(finalDistribution.successItems).toBe(940);
     expect(finalDistribution.failedItems).toBe(60);
 
-    const pendingLeft = await prisma.distributionItem.count({ where: { distributionId, status: 'PENDING' } });
+    const pendingLeft = await prisma.distributionItem.count({
+      where: { distributionId, status: 'PENDING' },
+    });
     expect(pendingLeft).toBe(0);
 
-    const okCount = await prisma.distributionItem.count({ where: { distributionId, status: 'OK' } });
-    const failedCount = await prisma.distributionItem.count({ where: { distributionId, status: 'FAILED' } });
+    const okCount = await prisma.distributionItem.count({
+      where: { distributionId, status: 'OK' },
+    });
+    const failedCount = await prisma.distributionItem.count({
+      where: { distributionId, status: 'FAILED' },
+    });
     expect(okCount).toBe(940);
     expect(failedCount).toBe(60);
 

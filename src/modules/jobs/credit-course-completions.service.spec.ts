@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import type { Job } from 'bullmq';
 import { PrismaService } from '../../prisma/prisma.service';
 import { LedgerService } from '../ledger/ledger.service';
 import { CourseCreditService } from '../courses/course-credit.service';
@@ -6,11 +7,18 @@ import { COURSE_COMPLETION_REWARD_COINS } from '../courses/courses.constants';
 import { DEFAULT_COINS_PER_REAL_SCALED } from '../settings/settings.constants';
 import { JobRunRecorderService } from './job-run-recorder.service';
 import { CreditCourseCompletionsService } from './credit-course-completions.service';
+import { CreditCourseCompletionsProcessor } from './credit-course-completions.processor';
 
 const prisma = new PrismaService();
 const ledgerService = new LedgerService(prisma);
 const courseCreditService = new CourseCreditService(prisma, ledgerService);
-const service = new CreditCourseCompletionsService(prisma, new JobRunRecorderService(prisma), courseCreditService);
+const service = new CreditCourseCompletionsService(
+  prisma,
+  new JobRunRecorderService(prisma),
+  courseCreditService,
+);
+const processor = new CreditCourseCompletionsProcessor(service);
+const controlledJob = {} as Job;
 
 const createdOrgIds: string[] = [];
 const createdUserIds: string[] = [];
@@ -27,7 +35,10 @@ async function createWalletFixture(): Promise<WalletFixture> {
   const suffix = randomUUID();
 
   const organization = await prisma.organization.create({
-    data: { name: `Credit Course Job Test Org ${suffix}`, cnpj: suffix.replace(/-/g, '').slice(0, 14) },
+    data: {
+      name: `Credit Course Job Test Org ${suffix}`,
+      cnpj: suffix.replace(/-/g, '').slice(0, 14),
+    },
   });
   createdOrgIds.push(organization.id);
   await prisma.conversionRate.create({
@@ -35,14 +46,20 @@ async function createWalletFixture(): Promise<WalletFixture> {
   });
 
   const user = await prisma.user.create({
-    data: { cpfEncrypted: `test-encrypted-${suffix}`, cpfHash: `test-hash-${suffix}`, name: `Credit Course Job Test User ${suffix}` },
+    data: {
+      cpfEncrypted: `test-encrypted-${suffix}`,
+      cpfHash: `test-hash-${suffix}`,
+      name: `Credit Course Job Test User ${suffix}`,
+    },
   });
   createdUserIds.push(user.id);
 
   const membership = await prisma.membership.create({
     data: { userId: user.id, organizationId: organization.id, type: 'EMPLOYEE' },
   });
-  const wallet = await prisma.wallet.create({ data: { membershipId: membership.id, cachedBalance: 0 } });
+  const wallet = await prisma.wallet.create({
+    data: { membershipId: membership.id, cachedBalance: 0 },
+  });
 
   return { organizationId: organization.id, membershipId: membership.id, walletId: wallet.id };
 }
@@ -65,12 +82,23 @@ async function createPaidBatch(organizationId: string, remainingCoins: number): 
 async function createPendingCompletion(fixture: WalletFixture) {
   const suffix = randomUUID();
   const course = await prisma.course.create({
-    data: { title: `Curso Job Test ${suffix}`, description: 'x', displayOrder: 0, status: 'PUBLISHED' },
+    data: {
+      title: `Curso Job Test ${suffix}`,
+      description: 'x',
+      displayOrder: 0,
+      status: 'PUBLISHED',
+    },
   });
   createdCourseIds.push(course.id);
   const quiz = await prisma.quiz.create({ data: { courseId: course.id } });
   const attempt = await prisma.quizAttempt.create({
-    data: { quizId: quiz.id, membershipId: fixture.membershipId, scorePercent: 100, passed: true, answers: [] },
+    data: {
+      quizId: quiz.id,
+      membershipId: fixture.membershipId,
+      scorePercent: 100,
+      passed: true,
+      answers: [],
+    },
   });
   return prisma.courseCompletion.create({
     data: {
@@ -83,7 +111,7 @@ async function createPendingCompletion(fixture: WalletFixture) {
 }
 
 async function runJobAndGetJobRun() {
-  await service.run();
+  await processor.process(controlledJob);
   const jobRun = await prisma.jobRun.findFirstOrThrow({
     where: { jobName: 'CREDIT_COURSE_COMPLETIONS' },
     orderBy: { startedAt: 'desc' },
@@ -93,14 +121,20 @@ async function runJobAndGetJobRun() {
 }
 
 afterAll(async () => {
-  const memberships = await prisma.membership.findMany({ where: { userId: { in: createdUserIds } } });
-  const wallets = await prisma.wallet.findMany({ where: { membershipId: { in: memberships.map((m) => m.id) } } });
+  const memberships = await prisma.membership.findMany({
+    where: { userId: { in: createdUserIds } },
+  });
+  const wallets = await prisma.wallet.findMany({
+    where: { membershipId: { in: memberships.map((m) => m.id) } },
+  });
   const walletIds = wallets.map((w) => w.id);
 
   await prisma.jobRun.deleteMany({ where: { id: { in: createdJobRunIds } } });
   await prisma.ledgerEntry.deleteMany({ where: { walletId: { in: walletIds } } });
   await prisma.courseCompletion.deleteMany({ where: { organizationId: { in: createdOrgIds } } });
-  await prisma.quizAttempt.deleteMany({ where: { membershipId: { in: memberships.map((m) => m.id) } } });
+  await prisma.quizAttempt.deleteMany({
+    where: { membershipId: { in: memberships.map((m) => m.id) } },
+  });
   await prisma.quiz.deleteMany({ where: { courseId: { in: createdCourseIds } } });
   await prisma.course.deleteMany({ where: { id: { in: createdCourseIds } } });
   await prisma.wallet.deleteMany({ where: { id: { in: walletIds } } });
@@ -145,10 +179,14 @@ describe('CreditCourseCompletionsService', () => {
 
     await runJobAndGetJobRun();
 
-    const stillPending = await prisma.courseCompletion.findUniqueOrThrow({ where: { id: pendingWithoutStock.id } });
+    const stillPending = await prisma.courseCompletion.findUniqueOrThrow({
+      where: { id: pendingWithoutStock.id },
+    });
     expect(stillPending.creditStatus).toBe('PENDING');
 
-    const credited = await prisma.courseCompletion.findUniqueOrThrow({ where: { id: pendingWithStock.id } });
+    const credited = await prisma.courseCompletion.findUniqueOrThrow({
+      where: { id: pendingWithStock.id },
+    });
     expect(credited.creditStatus).toBe('CREDITED');
   });
 

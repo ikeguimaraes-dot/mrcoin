@@ -85,7 +85,31 @@ Testes de integração nos fluxos críticos: compra de lote via webhook do PSP, 
 
 `pnpm test` e `pnpm lint` devem passar antes de qualquer tarefa ser considerada concluída.
 
+### Isolamento dos jobs nos testes
+
+E2E importa o `AppModule` completo, mas em `NODE_ENV=test` o `JobsModule` **não registra**
+automaticamente o scheduler nem os processors BullMQ dos jobs agendados. Os specs próprios de
+reconciliação, verificação da hash chain e crédito de cursos instanciam o processor real e chamam
+`process()` diretamente, de forma determinística, preservando a cobertura sem consumir filas.
+
+Esse isolamento existe porque workers iniciados durante E2E consumiam jobs pendentes do Redis em
+paralelo. No teardown, o Prisma era desconectado enquanto o job ainda executava, produzindo erros
+enganosos e recorrentes como `Response from the Engine was empty` e
+`Engine is not yet connected`. Não reative workers automaticamente nos E2E; teste processors
+diretamente nos specs de jobs.
+
 ## Ambiente local
+
+O projeto usa **Node 22**. Essa versão está alinhada entre `.nvmrc`, `package.json#engines` e a
+imagem do Docker. Antes de instalar dependências ou rodar testes:
+
+```bash
+nvm install
+nvm use
+node --version  # deve mostrar v22.x
+```
+
+Para tornar Node 22 o padrão em novos terminais: `nvm alias default 22`.
 
 ```bash
 pnpm install
@@ -100,13 +124,13 @@ Sem Docker. Banco é gerenciado na nuvem (Neon) em todos os ambientes. Redis rod
 
 ## Jobs agendados
 
-| Job | Frequência | O que faz |
-|---|---|---|
-| `expire-coins` | diário | Expira coins vencidos (FIFO por lote) |
-| `reconcile-balances` | diário | Compara soma dos entries com `cachedBalance`; divergência → alerta |
-| `verify-hash-chain` | diário | Valida integridade da cadeia de hashes |
-| `close-settlements` | semanal | Fecha período e dispara Pix aos parceiros |
-| `expiring-reminders` | diário | Notifica usuários com coins vencendo em 30/15/5 dias |
+| Job                  | Frequência | O que faz                                                          |
+| -------------------- | ---------- | ------------------------------------------------------------------ |
+| `expire-coins`       | diário     | Expira coins vencidos (FIFO por lote)                              |
+| `reconcile-balances` | diário     | Compara soma dos entries com `cachedBalance`; divergência → alerta |
+| `verify-hash-chain`  | diário     | Valida integridade da cadeia de hashes                             |
+| `close-settlements`  | semanal    | Fecha período e dispara Pix aos parceiros                          |
+| `expiring-reminders` | diário     | Notifica usuários com coins vencendo em 30/15/5 dias               |
 
 ## O que NÃO fazer
 
