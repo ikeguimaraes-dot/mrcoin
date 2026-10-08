@@ -18,6 +18,7 @@ function fixtureCnpj(): string {
 }
 
 afterAll(async () => {
+  await prisma.organizationValue.deleteMany({ where: { organizationId: { in: createdOrganizationIds } } });
   await prisma.adminInvite.deleteMany({ where: { organizationId: { in: createdOrganizationIds } } });
   await prisma.conversionRate.deleteMany({ where: { organizationId: { in: createdOrganizationIds } } });
   await prisma.adminUser.deleteMany({ where: { id: { in: createdAdminUserIds } } });
@@ -55,6 +56,28 @@ describe('createOrganizationWithOwnerInvite', () => {
     // sem coinsPerReal no input, nasce com a taxa padrão da plataforma
     expect(conversionRate.organizationId).toBe(organization.id);
     expect(conversionRate.coinsPerRealScaled).toBe(DEFAULT_COINS_PER_REAL_SCALED);
+  });
+
+  it('organização nova nasce com os quatro valores padrão do método FOME, ativos e em ordem', async () => {
+    const suffix = randomUUID();
+    const { organization } = await createOrganizationWithOwnerInvite(
+      prisma,
+      { name: `Empresa Valores ${suffix}`, cnpj: fixtureCnpj(), ownerEmail: `owner-values-${suffix}@test.coins-api.dev` },
+      ADMIN_PANEL_URL,
+    );
+    createdOrganizationIds.push(organization.id);
+
+    const values = await prisma.organizationValue.findMany({
+      where: { organizationId: organization.id },
+      orderBy: { sortOrder: 'asc' },
+    });
+
+    expect(values.map((value) => [value.name, value.sortOrder, value.isActive])).toEqual([
+      ['Foco', 1, true],
+      ['Ordem', 2, true],
+      ['Método', 3, true],
+      ['Execução', 4, true],
+    ]);
   });
 
   it('coinsPerReal explícito gera a taxa correspondente em vez do padrão', async () => {

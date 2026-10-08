@@ -1,6 +1,7 @@
 import { AdminRole, MembershipType, PrismaClient } from '@prisma/client';
 import { encryptCpf, hashCpf } from '../src/common/crypto/cpf-crypto.util';
 import { hashPassword } from '../src/modules/auth/password.util';
+import { backfillDefaultOrganizationValues } from '../src/modules/organization-values/default-organization-values';
 import { generateFakeCpf } from './cpf.fixture';
 
 const prisma = new PrismaClient();
@@ -208,6 +209,9 @@ async function seedPartnersWithOffers() {
 
 async function main() {
   const organization = await seedOrganization();
+  // Valores padrão (Foco/Ordem/Método/Execução) pra org do seed e pra qualquer outra do banco
+  // que ainda não tenha nenhum valor — mesma rotina do prisma/backfill-organization-values.ts.
+  await backfillDefaultOrganizationValues(prisma);
   await seedAdminUser(organization.id);
   await seedUsersWithWallets(organization.id);
   await seedPartnersWithOffers();

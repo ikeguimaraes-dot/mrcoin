@@ -8,7 +8,10 @@ export const distributionSchema = z.object({
   organizationId: z.string(),
   adminUserId: z.string(),
   csvFileUrl: z.string().nullable(),
+  /** @deprecated motivo livre legado — distribuições novas usam `message`. */
   reason: z.string().nullable(),
+  message: z.string().nullable(),
+  organizationValueId: z.string().nullable(),
   totalItems: z.number().int(),
   successItems: z.number().int(),
   failedItems: z.number().int(),

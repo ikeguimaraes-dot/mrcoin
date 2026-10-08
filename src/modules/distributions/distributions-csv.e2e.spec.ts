@@ -11,6 +11,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { hashPassword } from '../auth/password.util';
 import { TokenService } from '../auth/token.service';
 import { DEFAULT_COINS_PER_REAL_SCALED } from '../settings/settings.constants';
+import { createDefaultOrganizationValues } from '../organization-values/default-organization-values';
 import { DistributionsService } from './distributions.service';
 import { ProcessDistributionProcessor } from './process-distribution.processor';
 
@@ -59,6 +60,7 @@ async function createAdmin(role: AdminRole): Promise<AdminFixture> {
   await prisma.conversionRate.create({
     data: { organizationId: organization.id, coinsPerRealScaled: DEFAULT_COINS_PER_REAL_SCALED },
   });
+  await createDefaultOrganizationValues(prisma, organization.id);
 
   const admin = await prisma.adminUser.create({
     data: {
@@ -172,6 +174,7 @@ afterAll(async () => {
     where: { distribution: { organizationId: { in: createdOrgIds } } },
   });
   await prisma.distribution.deleteMany({ where: { organizationId: { in: createdOrgIds } } });
+  await prisma.organizationValue.deleteMany({ where: { organizationId: { in: createdOrgIds } } });
   await prisma.wallet.deleteMany({ where: { id: { in: walletIds } } });
   await prisma.membership.deleteMany({ where: { userId: { in: users.map((u) => u.id) } } });
   await prisma.coinBatch.deleteMany({ where: { organizationId: { in: createdOrgIds } } });
@@ -340,6 +343,95 @@ describe('POST /admin/distributions/:id/confirm', () => {
     const items = await prisma.distributionItem.findMany({ where: { distributionId } });
     await trackUsersFromItems(items);
   }, 30000);
+});
+
+describe('CSV como reconhecimento em lote', () => {
+  function findValueId(organizationId: string, name: string): Promise<string> {
+    return prisma.organizationValue
+      .findUniqueOrThrow({ where: { organizationId_name: { organizationId, name } } })
+      .then((value) => value.id);
+  }
+
+  it('message e organizationValueId únicos valem pro lote inteiro e chegam ao ledger de cada linha', async () => {
+    const owner = await createAdmin('OWNER');
+    const ownerToken = await tokenFor(owner);
+    await createPaidBatch(owner.organizationId, 1000, 30);
+    const execucaoId = await findValueId(owner.organizationId, 'Execução');
+    const csv = csvOf([`${randomCpf()},Lote Um,10,`, `${randomCpf()},Lote Dois,20,`]);
+
+    const upload = await request(server)
+      .post('/admin/distributions/csv')
+      .set('Authorization', `Bearer ${ownerToken}`)
+      .set('Idempotency-Key', `test-${randomUUID()}`)
+      .field('membershipType', 'EMPLOYEE')
+      .field('message', 'Fechamento do trimestre')
+      .field('organizationValueId', execucaoId)
+      .attach('file', Buffer.from(csv), 'reconhecimento.csv')
+      .expect(201);
+
+    const uploadBody = upload.body as GetDistributionResponseBody;
+    expect(uploadBody.distribution).toMatchObject({
+      adminUserId: owner.adminId,
+      message: 'Fechamento do trimestre',
+      organizationValueId: execucaoId,
+    });
+
+    const distributionId = uploadBody.distribution.id;
+    await request(server)
+      .post(`/admin/distributions/${distributionId}/confirm`)
+      .set('Authorization', `Bearer ${ownerToken}`)
+      .expect(201);
+    await processDistribution(distributionId);
+    const finalDistribution = await pollUntilDone(server, ownerToken, distributionId, 15000);
+    expect(finalDistribution.status).toBe('COMPLETED');
+
+    const items = await prisma.distributionItem.findMany({ where: { distributionId } });
+    await trackUsersFromItems(items);
+    const entries = await prisma.ledgerEntry.findMany({
+      where: { distributionItem: { distributionId } },
+    });
+    expect(entries).toHaveLength(2);
+    expect(entries.every((entry) => entry.description === 'Reconhecimento — Execução')).toBe(true);
+  });
+
+  it('sem message/organizationValueId o lote segue funcionando, com os campos null', async () => {
+    const owner = await createAdmin('OWNER');
+    const ownerToken = await tokenFor(owner);
+
+    const upload = await request(server)
+      .post('/admin/distributions/csv')
+      .set('Authorization', `Bearer ${ownerToken}`)
+      .set('Idempotency-Key', `test-${randomUUID()}`)
+      .field('membershipType', 'EMPLOYEE')
+      .attach('file', Buffer.from(csvOf([`${randomCpf()},Sem Reconhecimento,10,`])), 'sem.csv')
+      .expect(201);
+
+    expect((upload.body as GetDistributionResponseBody).distribution).toMatchObject({
+      message: null,
+      organizationValueId: null,
+    });
+  });
+
+  it('organizationValueId de outra organização é 422 já no upload, sem criar distribuição', async () => {
+    const owner = await createAdmin('OWNER');
+    const ownerToken = await tokenFor(owner);
+    const otherOrg = await createAdmin('OWNER');
+    const foreignValueId = await findValueId(otherOrg.organizationId, 'Foco');
+
+    const response = await request(server)
+      .post('/admin/distributions/csv')
+      .set('Authorization', `Bearer ${ownerToken}`)
+      .set('Idempotency-Key', `test-${randomUUID()}`)
+      .field('membershipType', 'EMPLOYEE')
+      .field('organizationValueId', foreignValueId)
+      .attach('file', Buffer.from(csvOf([`${randomCpf()},Intruso,10,`])), 'intruso.csv')
+      .expect(422);
+
+    expect((response.body as ErrorResponseBody).code).toBe('ORGANIZATION_VALUE_NOT_FOUND');
+    expect(
+      await prisma.distribution.count({ where: { organizationId: owner.organizationId } }),
+    ).toBe(0);
+  });
 });
 
 describe('GET /admin/distributions/:id', () => {

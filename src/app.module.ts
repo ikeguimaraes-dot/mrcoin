@@ -36,6 +36,7 @@ import { OffersModule } from './modules/offers/offers.module';
 import { RedemptionsModule } from './modules/redemptions/redemptions.module';
 import { SpinsModule } from './modules/spins/spins.module';
 import { CoursesModule } from './modules/courses/courses.module';
+import { OrganizationValuesModule } from './modules/organization-values/organization-values.module';
 
 @Module({
   imports: [
@@ -89,6 +90,7 @@ import { CoursesModule } from './modules/courses/courses.module';
     RedemptionsModule,
     SpinsModule,
     CoursesModule,
+    OrganizationValuesModule,
   ],
   providers: [
     { provide: APP_FILTER, useClass: AllExceptionsFilter },

@@ -3,7 +3,7 @@ import type { Server } from 'node:http';
 import { INestApplication } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { Test, TestingModule } from '@nestjs/testing';
-import { AdminRole, CoinBatch, Distribution, DistributionItem, LedgerEntry } from '@prisma/client';
+import { AdminRole, CoinBatch, Distribution, DistributionItem, LedgerEntry, OrganizationValue } from '@prisma/client';
 import request from 'supertest';
 import { AppModule } from '../../app.module';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -12,6 +12,7 @@ import { hashPassword } from '../auth/password.util';
 import { TokenService } from '../auth/token.service';
 import { LedgerService } from '../ledger/ledger.service';
 import { DEFAULT_COINS_PER_REAL_SCALED } from '../settings/settings.constants';
+import { createDefaultOrganizationValues } from '../organization-values/default-organization-values';
 
 interface CreateDistributionResponseBody {
   distribution: Distribution;
@@ -60,6 +61,7 @@ async function createAdmin(role: AdminRole): Promise<AdminFixture> {
   await prisma.conversionRate.create({
     data: { organizationId: organization.id, coinsPerRealScaled: DEFAULT_COINS_PER_REAL_SCALED },
   });
+  await createDefaultOrganizationValues(prisma, organization.id);
 
   const admin = await prisma.adminUser.create({
     data: {
@@ -92,6 +94,14 @@ async function createPaidBatch(organizationId: string, remainingCoins: number, e
   });
 }
 
+function findValue(organizationId: string, name: string): Promise<OrganizationValue> {
+  return prisma.organizationValue.findUniqueOrThrow({ where: { organizationId_name: { organizationId, name } } });
+}
+
+function recognitionPayload(cpf: string) {
+  return { cpf, name: 'Reconhecido', amount: 10, membershipType: 'EMPLOYEE' as const };
+}
+
 beforeAll(async () => {
   moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
   app = moduleRef.createNestApplication();
@@ -110,6 +120,7 @@ afterAll(async () => {
   await prisma.ledgerEntry.deleteMany({ where: { walletId: { in: walletIds } } });
   await prisma.distributionItem.deleteMany({ where: { distribution: { organizationId: { in: createdOrgIds } } } });
   await prisma.distribution.deleteMany({ where: { organizationId: { in: createdOrgIds } } });
+  await prisma.organizationValue.deleteMany({ where: { organizationId: { in: createdOrgIds } } });
   await prisma.wallet.deleteMany({ where: { id: { in: walletIds } } });
   await prisma.membership.deleteMany({ where: { userId: { in: users.map((u) => u.id) } } });
   await prisma.coinBatch.deleteMany({ where: { organizationId: { in: createdOrgIds } } });
@@ -458,6 +469,116 @@ describe('POST /admin/distributions', () => {
       .send({ cpf: randomCpf(), name: 'Motivo vazio', amount: 10, membershipType: 'CUSTOMER', reason: '   ' })
       .expect(400);
     expect((emptyReason.body as ErrorResponseBody).code).toBe('VALIDATION_ERROR');
+  });
+
+  it('reconhecimento: grava message, valor e admin; description do ledger cita o valor', async () => {
+    const manager = await createAdmin('MANAGER');
+    const managerToken = await tokenFor(manager);
+    await createPaidBatch(manager.organizationId, 1000, 30);
+    const foco = await findValue(manager.organizationId, 'Foco');
+
+    const cpf = randomCpf();
+    const response = await request(server)
+      .post('/admin/distributions')
+      .set('Authorization', `Bearer ${managerToken}`)
+      .set('Idempotency-Key', `test-${randomUUID()}`)
+      .send({ ...recognitionPayload(cpf), message: '  Entregou o projeto antes do prazo ', organizationValueId: foco.id })
+      .expect(201);
+    createdUserIds.push((await prisma.user.findUniqueOrThrow({ where: { cpfHash: hashCpf(cpf) } })).id);
+
+    const body = response.body as CreateDistributionResponseBody;
+    expect(body.distribution).toMatchObject({
+      adminUserId: manager.adminId,
+      message: 'Entregou o projeto antes do prazo',
+      organizationValueId: foco.id,
+    });
+    expect(body.item.ledgerEntries[0]?.description).toBe('Reconhecimento — Foco');
+  });
+
+  it('reconhecimento com valor de outra organização é 422 ORGANIZATION_VALUE_NOT_FOUND, sem crédito nem consumo de lote', async () => {
+    const owner = await createAdmin('OWNER');
+    const ownerToken = await tokenFor(owner);
+    const batch = await createPaidBatch(owner.organizationId, 1000, 30);
+    const otherOrg = await createAdmin('OWNER');
+    const foreignValue = await findValue(otherOrg.organizationId, 'Foco');
+
+    const cpf = randomCpf();
+    const response = await request(server)
+      .post('/admin/distributions')
+      .set('Authorization', `Bearer ${ownerToken}`)
+      .set('Idempotency-Key', `test-${randomUUID()}`)
+      .send({ ...recognitionPayload(cpf), message: 'Valeu', organizationValueId: foreignValue.id })
+      .expect(422);
+
+    expect((response.body as ErrorResponseBody).code).toBe('ORGANIZATION_VALUE_NOT_FOUND');
+    expect((await prisma.coinBatch.findUniqueOrThrow({ where: { id: batch.id } })).remainingCoins).toBe(1000);
+    expect(await prisma.user.findUnique({ where: { cpfHash: hashCpf(cpf) } })).toBeNull();
+    expect(await prisma.distribution.count({ where: { organizationId: owner.organizationId } })).toBe(0);
+  });
+
+  it('reconhecimento com valor desativado é 422 ORGANIZATION_VALUE_INACTIVE', async () => {
+    const owner = await createAdmin('OWNER');
+    const ownerToken = await tokenFor(owner);
+    await createPaidBatch(owner.organizationId, 1000, 30);
+    const foco = await findValue(owner.organizationId, 'Foco');
+    await prisma.organizationValue.update({ where: { id: foco.id }, data: { isActive: false } });
+
+    const response = await request(server)
+      .post('/admin/distributions')
+      .set('Authorization', `Bearer ${ownerToken}`)
+      .set('Idempotency-Key', `test-${randomUUID()}`)
+      .send({ ...recognitionPayload(randomCpf()), message: 'Valeu', organizationValueId: foco.id })
+      .expect(422);
+
+    expect((response.body as ErrorResponseBody).code).toBe('ORGANIZATION_VALUE_INACTIVE');
+  });
+
+  it('message vazia após trim ou acima de 280 caracteres é 400', async () => {
+    const owner = await createAdmin('OWNER');
+    const ownerToken = await tokenFor(owner);
+    const foco = await findValue(owner.organizationId, 'Foco');
+
+    for (const message of ['   ', 'x'.repeat(281)]) {
+      await request(server)
+        .post('/admin/distributions')
+        .set('Authorization', `Bearer ${ownerToken}`)
+        .set('Idempotency-Key', `test-${randomUUID()}`)
+        .send({ ...recognitionPayload(randomCpf()), message, organizationValueId: foco.id })
+        .expect(400);
+    }
+  });
+
+  it('replay com a mesma Idempotency-Key e mensagem diferente é 409 IDEMPOTENCY_CONFLICT', async () => {
+    const owner = await createAdmin('OWNER');
+    const ownerToken = await tokenFor(owner);
+    await createPaidBatch(owner.organizationId, 1000, 30);
+    const foco = await findValue(owner.organizationId, 'Foco');
+    const cpf = randomCpf();
+    const idempotencyKey = `test-${randomUUID()}`;
+    const payload = { ...recognitionPayload(cpf), message: 'Primeira', organizationValueId: foco.id };
+
+    await request(server)
+      .post('/admin/distributions')
+      .set('Authorization', `Bearer ${ownerToken}`)
+      .set('Idempotency-Key', idempotencyKey)
+      .send(payload)
+      .expect(201);
+    createdUserIds.push((await prisma.user.findUniqueOrThrow({ where: { cpfHash: hashCpf(cpf) } })).id);
+
+    await request(server)
+      .post('/admin/distributions')
+      .set('Authorization', `Bearer ${ownerToken}`)
+      .set('Idempotency-Key', idempotencyKey)
+      .send(payload)
+      .expect(201);
+
+    const conflict = await request(server)
+      .post('/admin/distributions')
+      .set('Authorization', `Bearer ${ownerToken}`)
+      .set('Idempotency-Key', idempotencyKey)
+      .send({ ...payload, message: 'Outra' })
+      .expect(409);
+    expect((conflict.body as ErrorResponseBody).code).toBe('IDEMPOTENCY_CONFLICT');
   });
 });
 

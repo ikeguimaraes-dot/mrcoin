@@ -9,6 +9,8 @@ export const SAFE_DISTRIBUTION_SELECT = {
   adminUserId: true,
   csvFileUrl: true,
   reason: true,
+  message: true,
+  organizationValueId: true,
   totalItems: true,
   successItems: true,
   failedItems: true,

@@ -184,6 +184,7 @@ model Organization {
   spinGrants        SpinGrant[]
   spins             Spin[]
   courseCompletions CourseCompletion[]
+  values            OrganizationValue[]
 }
 
 /// Usuário do painel administrativo (coins-admin) de uma organização.
@@ -568,24 +569,52 @@ model ConversionRate {
 /// Uma operação de distribuição de coins — individual (csvFileUrl nulo)
 /// ou em massa via CSV — disparada por um AdminUser.
 model Distribution {
-  id             String             @id @default(cuid())
-  organizationId String
-  organization   Organization       @relation(fields: [organizationId], references: [id])
-  adminUserId    String
-  adminUser      AdminUser          @relation(fields: [adminUserId], references: [id])
-  csvFileUrl     String?
-  reason         String?
-  totalItems     Int                @default(0)
-  successItems   Int                @default(0)
-  failedItems    Int                @default(0)
-  status         DistributionStatus @default(PENDING)
-  idempotencyKey String?            @unique
-  createdAt      DateTime           @default(now())
-  updatedAt      DateTime           @updatedAt
+  id                  String             @id @default(cuid())
+  organizationId      String
+  organization        Organization       @relation(fields: [organizationId], references: [id])
+  adminUserId         String
+  adminUser           AdminUser          @relation(fields: [adminUserId], references: [id])
+  csvFileUrl          String?
+  reason              String?
+  totalItems          Int                @default(0)
+  successItems        Int                @default(0)
+  failedItems         Int                @default(0)
+  status              DistributionStatus @default(PENDING)
+  idempotencyKey      String?            @unique
+  /// Reconhecimento: mensagem de quem distribuiu + valor da organização reconhecido. Nullable
+  /// de propósito — distribuições anteriores ao reconhecimento ficam sem esses dados (sem
+  /// backfill). `reason` é o campo legado de motivo livre, mantido só para leitura.
+  message             String?
+  organizationValueId String?
+  organizationValue   OrganizationValue? @relation(fields: [organizationValueId], references: [id], onDelete: Restrict)
+  createdAt           DateTime           @default(now())
+  updatedAt           DateTime           @updatedAt
 
   items DistributionItem[]
 
   @@index([organizationId])
+  @@index([organizationValueId])
+}
+
+/// Valor da cultura de uma organização (ex.: Foco, Ordem, Método, Execução — pilares do
+/// método FOME, criados por padrão em toda organização nova). Cada distribuição-reconhecimento
+/// aponta pra um valor. Valor já usado em alguma distribuição nunca é apagado, só desativado
+/// (`isActive = false`) — o FK Restrict em Distribution é a rede de segurança no banco.
+model OrganizationValue {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  name           String
+  description    String?
+  sortOrder      Int
+  isActive       Boolean      @default(true)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  distributions Distribution[]
+
+  @@unique([organizationId, name])
+  @@index([organizationId, isActive, sortOrder])
 }
 
 /// Uma linha de uma Distribution (um CPF + valor). `membershipId` só é

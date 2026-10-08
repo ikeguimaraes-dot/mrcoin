@@ -84,6 +84,7 @@ afterAll(async () => {
   await prisma.refreshToken.deleteMany({ where: { adminUserId: { in: createdAdminIds } } });
   await prisma.auditLog.deleteMany({ where: { actorAdminUserId: { in: createdAdminIds } } });
   await prisma.adminUser.deleteMany({ where: { OR: [{ id: { in: createdAdminIds } }, { organizationId: { in: createdOrgIds } }] } });
+  await prisma.organizationValue.deleteMany({ where: { organizationId: { in: createdOrgIds } } });
   await prisma.organization.deleteMany({ where: { id: { in: createdOrgIds } } });
   await prisma.platformAdminRefreshToken.deleteMany({
     where: { platformAdminId: { in: createdPlatformAdminIds } },

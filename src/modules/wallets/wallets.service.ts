@@ -1,13 +1,65 @@
 import { Injectable } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { LedgerService } from '../ledger/ledger.service';
-import { SafeLedgerEntry } from '../ledger/safe-ledger-entry.util';
+import { SAFE_LEDGER_ENTRY_SELECT, SafeLedgerEntry } from '../ledger/safe-ledger-entry.util';
 import { MembershipNotFoundException } from './exceptions/membership-not-found.exception';
 
 export interface ExpiringBatch {
   batchId: string;
   amount: number;
   expiresAt: Date;
+}
+
+const DEFAULT_ENTRIES_PAGE_SIZE = 20;
+
+/** Reconhecimento de uma entrada de distribuição — só o nome de quem reconheceu (nunca
+ * e-mail/id do AdminUser). */
+export interface EntryRecognition {
+  message: string | null;
+  recognizedByName: string;
+  value: { id: string; name: string } | null;
+}
+
+export type WalletEntry = SafeLedgerEntry & { recognition: EntryRecognition | null };
+
+/** Um select aninhado só, resolvido pelo Prisma com uma query `WHERE id IN (...)` por nível
+ * de relação pra página inteira — número de queries constante, independente do tamanho da
+ * página (sem N+1). */
+const WALLET_ENTRY_SELECT = {
+  ...SAFE_LEDGER_ENTRY_SELECT,
+  distributionItem: {
+    select: {
+      distribution: {
+        select: {
+          message: true,
+          adminUser: { select: { name: true } },
+          organizationValue: { select: { id: true, name: true } },
+        },
+      },
+    },
+  },
+} satisfies Prisma.LedgerEntrySelect;
+
+type WalletEntryRow = Prisma.LedgerEntryGetPayload<{ select: typeof WALLET_ENTRY_SELECT }>;
+
+/** Distribuição sem message nem valor (anterior ao reconhecimento, ou feita sem eles) não é
+ * reconhecimento — `recognition: null`, igual a qualquer entrada que não é distribuição. */
+function toWalletEntry(row: WalletEntryRow): WalletEntry {
+  const { distributionItem, ...entry } = row;
+  const distribution = distributionItem?.distribution;
+  const isRecognition = distribution && (distribution.message !== null || distribution.organizationValue !== null);
+
+  return {
+    ...entry,
+    recognition: isRecognition
+      ? {
+          message: distribution.message,
+          recognizedByName: distribution.adminUser.name,
+          value: distribution.organizationValue,
+        }
+      : null,
+  };
 }
 
 export interface WalletSummary {
@@ -59,9 +111,25 @@ export class WalletsService {
     userId: string,
     organizationId: string,
     options?: { cursor?: string; limit?: number },
-  ): Promise<{ items: SafeLedgerEntry[]; nextCursor: string | null }> {
+  ): Promise<{ items: WalletEntry[]; nextCursor: string | null }> {
     const { walletId } = await this.resolveWalletId(userId, organizationId);
-    return this.ledgerService.getEntries(walletId, options);
+    const limit = options?.limit ?? DEFAULT_ENTRIES_PAGE_SIZE;
+
+    // Mesma paginação de LedgerService.getEntries; query própria aqui pra o ledger não
+    // precisar saber de reconhecimento (o extrato do admin continua usando o do ledger).
+    const rows = await this.prisma.ledgerEntry.findMany({
+      where: { walletId },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      take: limit + 1,
+      select: WALLET_ENTRY_SELECT,
+      ...(options?.cursor ? { cursor: { id: options.cursor }, skip: 1 } : {}),
+    });
+
+    const hasMore = rows.length > limit;
+    const page = (hasMore ? rows.slice(0, limit) : rows).map(toWalletEntry);
+    const last = page[page.length - 1];
+
+    return { items: page, nextCursor: hasMore && last ? last.id : null };
   }
 
   /** Também usado por RedemptionsService — resolve a wallet certa (organização/membership)

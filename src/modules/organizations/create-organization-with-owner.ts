@@ -3,6 +3,7 @@ import { generateInviteToken } from './invite-token.util';
 import { EmailAlreadyInUseException } from './exceptions/email-already-in-use.exception';
 import { OrganizationCnpjInUseException } from './exceptions/organization-cnpj-in-use.exception';
 import { DEFAULT_COINS_PER_REAL_SCALED } from '../settings/settings.constants';
+import { createDefaultOrganizationValues } from '../organization-values/default-organization-values';
 
 export interface CreateOrganizationWithOwnerInput {
   name: string;
@@ -72,6 +73,8 @@ export async function createOrganizationWithOwnerInvite(
     const conversionRate = await tx.conversionRate.create({
       data: { organizationId: organization.id, coinsPerRealScaled },
     });
+
+    await createDefaultOrganizationValues(tx, organization.id);
 
     return { organization, invite, conversionRate };
   });

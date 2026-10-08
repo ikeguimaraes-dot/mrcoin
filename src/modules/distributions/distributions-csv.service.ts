@@ -11,6 +11,7 @@ import { IdempotencyConflictException } from './exceptions/idempotency-conflict.
 import { listDistributionItems } from './list-distribution-items.util';
 import { SafeDistributionItem } from './safe-distribution-item.util';
 import { SAFE_DISTRIBUTION_SELECT, SafeDistribution } from './safe-distribution.util';
+import { resolveRecognitionValue } from '../organization-values/resolve-recognition-value.util';
 
 const CPF_REGEX = /^\d{11}$/;
 
@@ -81,11 +82,21 @@ export class DistributionsCsvService {
       select: SAFE_DISTRIBUTION_SELECT,
     });
     if (existing) {
-      if (existing.organizationId !== organizationId || existing.totalItems !== rows.length) {
+      const recognitionMatches =
+        (existing.message ?? undefined) === input.message &&
+        (existing.organizationValueId ?? undefined) === input.organizationValueId;
+      if (existing.organizationId !== organizationId || existing.totalItems !== rows.length || !recognitionMatches) {
         throw new IdempotencyConflictException(idempotencyKey, { distributionId: existing.id });
       }
       const items = await listDistributionItems(this.prisma, existing.id, undefined);
       return { distribution: existing, items };
+    }
+
+    // Valida antes de subir o arquivo: valor de outra organização ou desativado é 422 já no
+    // upload, sem deixar CSV órfão no storage. Não revalida no confirm — o valor escolhido no
+    // upload vale pro lote, mesmo que seja desativado no meio do caminho.
+    if (input.organizationValueId) {
+      await resolveRecognitionValue(this.prisma, organizationId, input.organizationValueId);
     }
 
     const { url } = await this.storagePort.upload({
@@ -103,6 +114,8 @@ export class DistributionsCsvService {
           organizationId,
           adminUserId,
           csvFileUrl: url,
+          message: input.message,
+          organizationValueId: input.organizationValueId,
           totalItems: validatedRows.length,
           successItems: 0,
           failedItems: failedCount,

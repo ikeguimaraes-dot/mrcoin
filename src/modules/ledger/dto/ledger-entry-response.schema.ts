@@ -20,3 +20,19 @@ export const ledgerEntryItemSchema = z.object({
 
 export const ledgerEntryListResponseSchema = paginatedResponseSchema(ledgerEntryItemSchema);
 export class LedgerEntryListResponseDto extends createZodDto(ledgerEntryListResponseSchema) {}
+
+/** Extrato do app (GET /wallet/entries): entrada do ledger + dados de reconhecimento, quando
+ * a entrada é de uma distribuição com mensagem/valor. Só acrescenta campo — contrato antigo
+ * continua válido. */
+export const walletEntryItemSchema = ledgerEntryItemSchema.extend({
+  recognition: z
+    .object({
+      message: z.string().nullable(),
+      recognizedByName: z.string(),
+      value: z.object({ id: z.string(), name: z.string() }).nullable(),
+    })
+    .nullable(),
+});
+
+export const walletEntryListResponseSchema = paginatedResponseSchema(walletEntryItemSchema);
+export class WalletEntryListResponseDto extends createZodDto(walletEntryListResponseSchema) {}

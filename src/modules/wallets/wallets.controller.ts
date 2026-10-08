@@ -8,7 +8,7 @@ import { WalletsService } from './wallets.service';
 import { WalletQueryDto, walletQuerySchema } from './dto/wallet-query.schema';
 import { WalletEntriesQueryDto, walletEntriesQuerySchema } from './dto/wallet-entries-query.schema';
 import { WalletResponseDto } from './dto/wallet-response.schema';
-import { LedgerEntryListResponseDto } from '../ledger/dto/ledger-entry-response.schema';
+import { WalletEntryListResponseDto } from '../ledger/dto/ledger-entry-response.schema';
 
 @ApiTags('wallets')
 @Controller('wallet')
@@ -27,8 +27,10 @@ export class WalletsController {
   }
 
   @Get('entries')
-  @ApiOperation({ summary: 'Extrato da wallet, paginado por cursor' })
-  @ApiOkResponse({ type: LedgerEntryListResponseDto })
+  @ApiOperation({
+    summary: 'Extrato da wallet, paginado por cursor — entradas de reconhecimento trazem quem reconheceu, mensagem e valor',
+  })
+  @ApiOkResponse({ type: WalletEntryListResponseDto })
   getEntries(
     @CurrentUser() user: UserJwtPayload,
     @Query(new ZodValidationPipe(walletEntriesQuerySchema)) query: WalletEntriesQueryDto,

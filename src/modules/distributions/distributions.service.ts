@@ -20,6 +20,7 @@ import {
 } from './distributions.constants';
 import { ensureUserMembershipWallet } from './ensure-user-membership-wallet.util';
 import { executeFifoPlan, planFifoOrThrow } from './fifo-batch-consumption.util';
+import { resolveRecognitionValue } from '../organization-values/resolve-recognition-value.util';
 import { listDistributionItems } from './list-distribution-items.util';
 import { SAFE_DISTRIBUTION_ITEM_SELECT, SafeDistributionItem } from './safe-distribution-item.util';
 import { SAFE_DISTRIBUTION_SELECT, SafeDistribution } from './safe-distribution.util';
@@ -29,6 +30,27 @@ interface ProcessDistributionJobData {
 }
 
 const DISTRIBUTION_DESCRIPTION = 'Distribuição de coins';
+const RECOGNITION_DESCRIPTION = 'Reconhecimento';
+
+interface DescriptionSource {
+  recognitionValueName: string | null;
+  hasMessage: boolean;
+  legacyReason?: string | null;
+}
+
+/** `description` do LedgerEntry (texto livre que entra no hash do próprio entry — nunca muda
+ * depois de gravado). Reconhecimento cita o valor; sem reconhecimento, mantém o formato
+ * legado com `reason`. Mensagem e nome de quem reconheceu NÃO entram aqui: o extrato do app
+ * lê os dois da Distribution, pelo relacionamento. */
+export function buildDistributionDescription(source: DescriptionSource): string {
+  if (source.recognitionValueName) {
+    return `${RECOGNITION_DESCRIPTION} — ${source.recognitionValueName}`;
+  }
+  if (source.hasMessage) {
+    return RECOGNITION_DESCRIPTION;
+  }
+  return source.legacyReason ? `${DISTRIBUTION_DESCRIPTION} — ${source.legacyReason}` : DISTRIBUTION_DESCRIPTION;
+}
 
 type ExistingDistribution = SafeDistribution & {
   items: (SafeDistributionItem & {
@@ -93,6 +115,12 @@ export class DistributionsService {
     const cpfHash = hashCpf(input.cpf);
 
     const { distribution, item, userId } = await this.prisma.$transaction(async (tx) => {
+      // Antes de qualquer escrita: valor de outra organização (ou desativado) aborta sem
+      // criar User/Membership nem consumir lote.
+      const recognitionValue = input.organizationValueId
+        ? await resolveRecognitionValue(tx, organizationId, input.organizationValueId)
+        : null;
+
       const plan = await planFifoOrThrow(tx, organizationId, input.amount);
 
       const { userId: ensuredUserId, membershipId, walletId } = await ensureUserMembershipWallet(tx, {
@@ -109,6 +137,8 @@ export class DistributionsService {
           organizationId,
           adminUserId,
           reason: input.reason,
+          message: input.message,
+          organizationValueId: recognitionValue?.id,
           totalItems: 1,
           successItems: 1,
           failedItems: 0,
@@ -128,7 +158,11 @@ export class DistributionsService {
         select: SAFE_DISTRIBUTION_ITEM_SELECT,
       });
 
-      const description = input.reason ? `${DISTRIBUTION_DESCRIPTION} — ${input.reason}` : DISTRIBUTION_DESCRIPTION;
+      const description = buildDistributionDescription({
+        recognitionValueName: recognitionValue?.name ?? null,
+        hasMessage: input.message !== undefined,
+        legacyReason: input.reason,
+      });
       const ledgerEntries = await executeFifoPlan(tx, this.ledgerService, plan, organizationId, {
         walletId,
         referenceType: 'DISTRIBUTION',
@@ -162,7 +196,9 @@ export class DistributionsService {
     const paramsMatch =
       existing.organizationId === organizationId &&
       item?.amount === input.amount &&
-      item?.membership?.user.cpfHash === cpfHash;
+      item?.membership?.user.cpfHash === cpfHash &&
+      (existing.message ?? undefined) === input.message &&
+      (existing.organizationValueId ?? undefined) === input.organizationValueId;
 
     if (!paramsMatch || !item) {
       throw new IdempotencyConflictException(idempotencyKey, { distributionId: existing.id });
@@ -258,7 +294,14 @@ export class DistributionsService {
    * a cada iteração — se o worker cair no meio e o BullMQ reenviar o job, ele simplesmente
    * retoma do que ainda estiver PENDING (idempotente por construção). */
   async processBulkDistribution(distributionId: string): Promise<void> {
-    const distribution = await this.prisma.distribution.findUniqueOrThrow({ where: { id: distributionId } });
+    const distribution = await this.prisma.distribution.findUniqueOrThrow({
+      where: { id: distributionId },
+      include: { organizationValue: { select: { name: true } } },
+    });
+    const description = buildDistributionDescription({
+      recognitionValueName: distribution.organizationValue?.name ?? null,
+      hasMessage: distribution.message !== null,
+    });
 
     for (;;) {
       const pendingItems = await this.prisma.distributionItem.findMany({
@@ -271,7 +314,7 @@ export class DistributionsService {
         break;
       }
 
-      await Promise.all(pendingItems.map((item) => this.processDistributionItem(distribution.organizationId, item)));
+      await Promise.all(pendingItems.map((item) => this.processDistributionItem(distribution.organizationId, item, description)));
     }
 
     const finalState = await this.prisma.distribution.findUniqueOrThrow({ where: { id: distributionId } });
@@ -296,7 +339,11 @@ export class DistributionsService {
    * Retry limitado (mesmo espírito do MAX_RETRIES do LedgerService pra optimistic lock)
    * cobre tanto esse timeout quanto InsufficientCoinStockException — qualquer outro erro
    * falha a linha na hora, sem repetir. */
-  private async processDistributionItem(organizationId: string, item: DistributionItem): Promise<void> {
+  private async processDistributionItem(
+    organizationId: string,
+    item: DistributionItem,
+    description: string,
+  ): Promise<void> {
     const maxAttempts = 3;
     let lastError: unknown;
 
@@ -323,7 +370,7 @@ export class DistributionsService {
             walletId,
             referenceType: 'DISTRIBUTION',
             referenceId: item.id,
-            description: DISTRIBUTION_DESCRIPTION,
+            description,
             distributionItemId: item.id,
             idempotencyKeyPrefix: `distribution-item:${item.id}`,
           });
