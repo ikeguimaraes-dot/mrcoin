@@ -871,24 +871,42 @@ model PartnerRefreshToken {
 /// pessoa (aplicado em RedemptionsService, na criação e na confirmação — ver Sessão 17).
 /// imageUrl nulo = catálogo mostra placeholder no app, não é obrigatório no cadastro.
 model Offer {
-  id           String      @id @default(cuid())
+  id           String        @id @default(cuid())
   partnerId    String
-  partner      Partner     @relation(fields: [partnerId], references: [id])
+  partner      Partner       @relation(fields: [partnerId], references: [id])
   title        String
   description  String
   category     String
-  costInCoins  Int         @default(0)
+  categoryData OfferCategory @relation(fields: [category], references: [name], onUpdate: Cascade)
+  costInCoins  Int           @default(0)
+  originalCost Int?
+  featured     Boolean       @default(false)
   imageUrl     String?
   validFrom    DateTime?
   validUntil   DateTime?
   perUserLimit Int?
-  status       OfferStatus @default(ACTIVE)
-  createdAt    DateTime    @default(now())
-  updatedAt    DateTime    @updatedAt
+  status       OfferStatus   @default(ACTIVE)
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
 
   redemptions Redemption[]
 
   @@index([partnerId])
+  @@index([category])
+  @@index([featured])
+}
+
+/// Categoria administrável da vitrine de ofertas. `name` é também a chave usada por Offer
+/// para preservar o contrato textual já consumido pelo app; `slug` é a chave estável dos filtros.
+model OfferCategory {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  slug      String   @unique
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  offers Offer[]
 }
 
 /// Resgate de coins num parceiro. Criar um Redemption NÃO move coins —

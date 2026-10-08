@@ -178,6 +178,19 @@ async function seedPartnersWithOffers() {
       create: { cnpj: partnerData.cnpj, ...partnerFields },
     });
 
+    await prisma.offerCategory.upsert({
+      where: { name: partnerData.category },
+      update: { active: true },
+      create: {
+        name: partnerData.category,
+        slug: `${partnerData.category
+          .toLocaleLowerCase('pt-BR')
+          .normalize('NFD')
+          .replace(/[\u0300-\u036f]/g, '')
+          .replace(/[^a-z0-9]+/g, '-')}`,
+      },
+    });
+
     for (const offerData of partnerData.offers) {
       const existingOffer = await prisma.offer.findFirst({
         where: { partnerId: partner.id, title: offerData.title },

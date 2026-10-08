@@ -14,6 +14,9 @@ interface OfferSummaryBody {
   partnerId: string;
   title: string;
   costInCoins: number;
+  originalCost: number | null;
+  featured: boolean;
+  validUntil: string | null;
   imageUrl: string | null;
   status: string;
   partner: { id: string; name: string };
@@ -66,6 +69,11 @@ async function createPartnerFixture(): Promise<{ id: string }> {
 }
 
 beforeAll(async () => {
+  await prisma.offerCategory.upsert({
+    where: { name: 'Comida' },
+    update: { active: true },
+    create: { name: 'Comida', slug: 'comida' },
+  });
   const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
   app = moduleRef.createNestApplication();
   await app.init();
@@ -107,6 +115,8 @@ describe('Fluxo feliz — POST/GET/PATCH /platform/offers', () => {
         description: 'Descrição de teste',
         category: 'Comida',
         costInCoins: 100,
+        originalCost: 150,
+        featured: true,
         imageUrl: 'https://example.com/imagem.png',
       })
       .expect(201);
@@ -116,6 +126,8 @@ describe('Fluxo feliz — POST/GET/PATCH /platform/offers', () => {
     expect(created.status).toBe('ACTIVE');
     expect(created.partner.id).toBe(partner.id);
     expect(created.imageUrl).toBe('https://example.com/imagem.png');
+    expect(created.originalCost).toBe(150);
+    expect(created.featured).toBe(true);
 
     // outra oferta de outro parceiro, pra validar o filtro
     const otherOfferResponse = await request(server)
@@ -148,12 +160,20 @@ describe('Fluxo feliz — POST/GET/PATCH /platform/offers', () => {
     const patchResponse = await request(server)
       .patch(`/platform/offers/${created.id}`)
       .set('Authorization', `Bearer ${token}`)
-      .send({ costInCoins: 200, status: 'INACTIVE', imageUrl: null })
+      .send({
+        costInCoins: 200,
+        originalCost: 250,
+        featured: false,
+        status: 'INACTIVE',
+        imageUrl: null,
+      })
       .expect(200);
     const patched = patchResponse.body as OfferSummaryBody;
     expect(patched.costInCoins).toBe(200);
     expect(patched.status).toBe('INACTIVE');
     expect(patched.imageUrl).toBeNull();
+    expect(patched.originalCost).toBe(250);
+    expect(patched.featured).toBe(false);
 
     const createLog = await prisma.platformAdminAuditLog.findFirst({
       where: { platformAdminId, action: 'OFFER_CREATED' },
@@ -163,6 +183,30 @@ describe('Fluxo feliz — POST/GET/PATCH /platform/offers', () => {
       where: { platformAdminId, action: 'OFFER_UPDATED' },
     });
     expect(updateLog).not.toBeNull();
+  });
+
+  it('oferta vencida continua visível no painel', async () => {
+    const { token } = await createPlatformAdminFixture();
+    const partner = await createPartnerFixture();
+    const response = await request(server)
+      .post('/platform/offers')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        partnerId: partner.id,
+        title: `Oferta vencida ${randomUUID()}`,
+        description: 'Descrição',
+        category: 'comida',
+        costInCoins: 100,
+        validUntil: new Date(Date.now() - 86_400_000).toISOString(),
+      })
+      .expect(201);
+    const created = response.body as OfferSummaryBody;
+    createdOfferIds.push(created.id);
+
+    await request(server)
+      .get(`/platform/offers/${created.id}`)
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
   });
 
   it('partnerId inexistente no create retorna 404', async () => {
@@ -223,13 +267,27 @@ describe('Isolamento total — apenas PlatformAdmin acessa /platform/offers', ()
     // Partner logo abaixo: evita consumir o rate limit de login compartilhado entre todos os
     // specs e2e que rodam serial no mesmo processo Jest.
     const jwtService = app.get(JwtService);
-    const accessToken = jwtService.sign({ sub: randomUUID(), organizationId: randomUUID(), role: 'OPERATOR', type: 'admin' });
+    const accessToken = jwtService.sign({
+      sub: randomUUID(),
+      organizationId: randomUUID(),
+      role: 'OPERATOR',
+      type: 'admin',
+    });
 
-    await request(server).get('/platform/offers').set('Authorization', `Bearer ${accessToken}`).expect(401);
+    await request(server)
+      .get('/platform/offers')
+      .set('Authorization', `Bearer ${accessToken}`)
+      .expect(401);
     await request(server)
       .post('/platform/offers')
       .set('Authorization', `Bearer ${accessToken}`)
-      .send({ partnerId: randomUUID(), title: 'X', description: 'X', category: 'X', costInCoins: 10 })
+      .send({
+        partnerId: randomUUID(),
+        title: 'X',
+        description: 'X',
+        category: 'X',
+        costInCoins: 10,
+      })
       .expect(401);
   });
 
@@ -237,11 +295,20 @@ describe('Isolamento total — apenas PlatformAdmin acessa /platform/offers', ()
     const jwtService = app.get(JwtService);
     const partnerToken = jwtService.sign({ sub: randomUUID(), type: 'partner' });
 
-    await request(server).get('/platform/offers').set('Authorization', `Bearer ${partnerToken}`).expect(401);
+    await request(server)
+      .get('/platform/offers')
+      .set('Authorization', `Bearer ${partnerToken}`)
+      .expect(401);
     await request(server)
       .post('/platform/offers')
       .set('Authorization', `Bearer ${partnerToken}`)
-      .send({ partnerId: randomUUID(), title: 'X', description: 'X', category: 'X', costInCoins: 10 })
+      .send({
+        partnerId: randomUUID(),
+        title: 'X',
+        description: 'X',
+        category: 'X',
+        costInCoins: 10,
+      })
       .expect(401);
   });
 });

@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { PlatformAdminAuditService } from '../platform-admin-audit.service';
 import { OfferNotFoundException } from '../../offers/exceptions/offer-not-found.exception';
@@ -28,14 +28,17 @@ export class PlatformOffersService {
     if (!partner) {
       throw new PartnerNotFoundException();
     }
+    const category = await this.resolveActiveCategory(input.category);
 
     const offer = await this.prisma.offer.create({
       data: {
         partnerId: input.partnerId,
         title: input.title,
         description: input.description,
-        category: input.category,
+        category: category.name,
         costInCoins: input.costInCoins,
+        originalCost: input.originalCost,
+        featured: input.featured,
         imageUrl: input.imageUrl,
         validFrom: input.validFrom,
         validUntil: input.validUntil,
@@ -99,9 +102,17 @@ export class PlatformOffersService {
       throw new OfferNotFoundException();
     }
 
+    const category = input.category ? await this.resolveActiveCategory(input.category) : undefined;
+    const effectiveCost = input.costInCoins ?? existing.costInCoins;
+    const effectiveOriginalCost =
+      input.originalCost === undefined ? existing.originalCost : input.originalCost;
+    if (effectiveOriginalCost !== null && effectiveOriginalCost <= effectiveCost) {
+      throw new BadRequestException('originalCost deve ser maior que costInCoins.');
+    }
+
     const offer = await this.prisma.offer.update({
       where: { id: offerId },
-      data: input,
+      data: { ...input, ...(category ? { category: category.name } : {}) },
       select: SAFE_OFFER_PLATFORM_SELECT,
     });
 
@@ -113,5 +124,16 @@ export class PlatformOffersService {
     });
 
     return offer;
+  }
+
+  private async resolveActiveCategory(identifier: string): Promise<{ name: string }> {
+    const category = await this.prisma.offerCategory.findFirst({
+      where: { active: true, OR: [{ name: identifier }, { slug: identifier }] },
+      select: { name: true },
+    });
+    if (!category) {
+      throw new NotFoundException('Categoria de oferta não encontrada ou inativa.');
+    }
+    return category;
   }
 }

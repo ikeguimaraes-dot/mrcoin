@@ -24,10 +24,19 @@ interface PlatformDashboardBody {
   };
   timeseries: {
     months: number;
-    points: Array<{ month: string; coinsIssued: number; revenueInCents: number; coinsRedeemed: number }>;
+    points: Array<{
+      month: string;
+      coinsIssued: number;
+      revenueInCents: number;
+      coinsRedeemed: number;
+    }>;
   };
   rankings: {
-    topOrganizationsByCoinsIssued: Array<{ organizationId: string; name: string; coinsIssued: number }>;
+    topOrganizationsByCoinsIssued: Array<{
+      organizationId: string;
+      name: string;
+      coinsIssued: number;
+    }>;
     topPartnersByConfirmedRedemptions: Array<{
       partnerId: string;
       name: string;
@@ -87,7 +96,9 @@ async function createPlatformAdminFixture(): Promise<{ platformAdminId: string; 
   return { platformAdminId: platformAdmin.id, token };
 }
 
-async function createOrg(status: OrganizationStatus = 'ACTIVE'): Promise<{ id: string; name: string }> {
+async function createOrg(
+  status: OrganizationStatus = 'ACTIVE',
+): Promise<{ id: string; name: string }> {
   const suffix = randomUUID();
   const organization = await prisma.organization.create({
     data: {
@@ -100,7 +111,9 @@ async function createOrg(status: OrganizationStatus = 'ACTIVE'): Promise<{ id: s
   return organization;
 }
 
-async function createMemberWithWallet(organizationId: string): Promise<{ membershipId: string; walletId: string }> {
+async function createMemberWithWallet(
+  organizationId: string,
+): Promise<{ membershipId: string; walletId: string }> {
   const suffix = randomUUID();
   const cpf = randomInt(10_000_000_000, 100_000_000_000).toString();
   const user = await prisma.user.create({
@@ -138,6 +151,11 @@ async function createPartner(): Promise<{ id: string; name: string }> {
 
 async function createOffer(partnerId: string): Promise<{ id: string; title: string }> {
   const suffix = randomUUID();
+  await prisma.offerCategory.upsert({
+    where: { name: 'Teste' },
+    update: { active: true },
+    create: { name: 'Teste', slug: 'teste' },
+  });
   const offer = await prisma.offer.create({
     data: {
       partnerId,
@@ -216,7 +234,9 @@ beforeAll(async () => {
 afterAll(async () => {
   await app.close();
   await prisma.redemption.deleteMany({
-    where: { OR: [{ partnerId: { in: createdPartnerIds } }, { walletId: { in: createdWalletIds } }] },
+    where: {
+      OR: [{ partnerId: { in: createdPartnerIds } }, { walletId: { in: createdWalletIds } }],
+    },
   });
   await prisma.ledgerEntry.deleteMany({ where: { walletId: { in: createdWalletIds } } });
   await prisma.wallet.deleteMany({ where: { id: { in: createdWalletIds } } });
@@ -288,7 +308,9 @@ describe('GET /platform/dashboard — cards', () => {
     expect(after.cards.coinsRedeemedTotal - before.cards.coinsRedeemedTotal).toBe(120);
     expect(after.cards.coinsExpiredTotal - before.cards.coinsExpiredTotal).toBe(80);
     expect(after.cards.revenue.totalInCents - before.cards.revenue.totalInCents).toBe(50000);
-    expect(after.cards.revenue.currentMonthInCents - before.cards.revenue.currentMonthInCents).toBe(50000);
+    expect(after.cards.revenue.currentMonthInCents - before.cards.revenue.currentMonthInCents).toBe(
+      50000,
+    );
   });
 
   it('lote PAID em mês anterior conta no total mas não no mês corrente', async () => {
@@ -299,13 +321,20 @@ describe('GET /platform/dashboard — cards', () => {
     const twoMonthsAgo = new Date();
     twoMonthsAgo.setUTCMonth(twoMonthsAgo.getUTCMonth() - 2);
 
-    await createCoinBatch({ organizationId: org.id, totalCoins: 10, priceInCents: 10000, updatedAt: twoMonthsAgo });
+    await createCoinBatch({
+      organizationId: org.id,
+      totalCoins: 10,
+      priceInCents: 10000,
+      updatedAt: twoMonthsAgo,
+    });
     await createCoinBatch({ organizationId: org.id, totalCoins: 20, priceInCents: 20000 });
 
     const after = await getDashboard(token);
 
     expect(after.cards.revenue.totalInCents - before.cards.revenue.totalInCents).toBe(30000);
-    expect(after.cards.revenue.currentMonthInCents - before.cards.revenue.currentMonthInCents).toBe(20000);
+    expect(after.cards.revenue.currentMonthInCents - before.cards.revenue.currentMonthInCents).toBe(
+      20000,
+    );
   });
 
   it('lote PENDING não conta em nenhum card', async () => {
@@ -313,7 +342,12 @@ describe('GET /platform/dashboard — cards', () => {
     const before = await getDashboard(token);
 
     const org = await createOrg();
-    await createCoinBatch({ organizationId: org.id, totalCoins: 999, priceInCents: 99900, status: 'PENDING' });
+    await createCoinBatch({
+      organizationId: org.id,
+      totalCoins: 999,
+      priceInCents: 99900,
+      status: 'PENDING',
+    });
 
     const after = await getDashboard(token);
 
@@ -376,7 +410,9 @@ describe('GET /platform/dashboard — rankings', () => {
     await createCoinBatch({ organizationId: org.id, totalCoins: HUGE_AMOUNT, priceInCents: 1 });
 
     const body = await getDashboard(token);
-    const ranked = body.rankings.topOrganizationsByCoinsIssued.find((r) => r.organizationId === org.id);
+    const ranked = body.rankings.topOrganizationsByCoinsIssued.find(
+      (r) => r.organizationId === org.id,
+    );
     expect(ranked).toBeDefined();
     expect(ranked?.name).toBe(org.name);
     expect(ranked?.coinsIssued).toBe(HUGE_AMOUNT);
@@ -412,7 +448,9 @@ describe('GET /platform/dashboard — rankings', () => {
     ]);
 
     const body = await getDashboard(token);
-    const ranked = body.rankings.topPartnersByConfirmedRedemptions.find((r) => r.partnerId === partner.id);
+    const ranked = body.rankings.topPartnersByConfirmedRedemptions.find(
+      (r) => r.partnerId === partner.id,
+    );
     expect(ranked).toBeDefined();
     expect(ranked?.name).toBe(partner.name);
     expect(ranked?.confirmedRedemptions).toBe(CONFIRMED_COUNT + DELIVERED_COUNT);
@@ -424,7 +462,11 @@ describe('GET /platform/dashboard — atividade recente', () => {
   it('lote recém-criado aparece em latestBatches com os dados certos', async () => {
     const { token } = await createPlatformAdminFixture();
     const org = await createOrg();
-    const batch = await createCoinBatch({ organizationId: org.id, totalCoins: 42, priceInCents: 4200 });
+    const batch = await createCoinBatch({
+      organizationId: org.id,
+      totalCoins: 42,
+      priceInCents: 4200,
+    });
 
     const body = await getDashboard(token);
     const found = body.recentActivity.latestBatches.find((b) => b.id === batch.id);
@@ -451,7 +493,9 @@ describe('GET /platform/dashboard — atividade recente', () => {
     });
 
     const body = await getDashboard(token);
-    const found = body.recentActivity.latestConfirmedRedemptions.find((r) => r.id === redemption.id);
+    const found = body.recentActivity.latestConfirmedRedemptions.find(
+      (r) => r.id === redemption.id,
+    );
     expect(found).toBeDefined();
     expect(found?.partnerName).toBe(partner.name);
     expect(found?.offerTitle).toBe(offer.title);
@@ -475,7 +519,9 @@ describe('GET /platform/dashboard — atividade recente', () => {
     });
 
     const body = await getDashboard(token);
-    const found = body.recentActivity.latestConfirmedRedemptions.find((r) => r.id === redemption.id);
+    const found = body.recentActivity.latestConfirmedRedemptions.find(
+      (r) => r.id === redemption.id,
+    );
     expect(found).toBeDefined();
     expect(found?.amount).toBe(55);
   });
@@ -484,7 +530,12 @@ describe('GET /platform/dashboard — atividade recente', () => {
 describe('Isolamento total — apenas PlatformAdmin acessa GET /platform/dashboard', () => {
   it('token de AdminUser e de Partner recebem 401', async () => {
     const jwtService = app.get(JwtService);
-    const adminToken = jwtService.sign({ sub: randomUUID(), organizationId: randomUUID(), role: 'OPERATOR', type: 'admin' });
+    const adminToken = jwtService.sign({
+      sub: randomUUID(),
+      organizationId: randomUUID(),
+      role: 'OPERATOR',
+      type: 'admin',
+    });
     const partnerToken = jwtService.sign({ sub: randomUUID(), type: 'partner' });
 
     for (const badToken of [adminToken, partnerToken]) {

@@ -14,9 +14,14 @@ import { SAFE_OFFER_CATALOG_SELECT, SafeOfferCatalog } from './safe-offer.util';
 export class OffersService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async listCatalog(query: ListOffersQuery): Promise<{ items: SafeOfferCatalog[]; nextCursor: string | null }> {
+  async listCatalog(
+    query: ListOffersQuery,
+  ): Promise<{ items: SafeOfferCatalog[]; nextCursor: string | null }> {
     const limit = query.limit ?? OFFER_LIST_PAGE_SIZE;
-    const where = offerAvailabilityWhere(query.partnerId);
+    const where = offerAvailabilityWhere(query.partnerId, {
+      category: query.category,
+      featured: query.featured,
+    });
 
     const offers = await this.prisma.offer.findMany({
       where,

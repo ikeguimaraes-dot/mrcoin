@@ -5,6 +5,11 @@ export const listOffersQuerySchema = z.object({
   cursor: z.string().optional(),
   limit: z.coerce.number().int().positive().max(100).optional(),
   partnerId: z.string().optional(),
+  category: z.string().min(1).optional(),
+  featured: z
+    .enum(['true', 'false'])
+    .transform((value) => value === 'true')
+    .optional(),
 });
 
 export type ListOffersQuery = z.infer<typeof listOffersQuerySchema>;

@@ -4,14 +4,24 @@ import { Prisma } from '@prisma/client';
  * dentro da janela de validade, E o parceiro dono dela precisa estar ACTIVE. Compartilhado
  * entre o catálogo (OffersService) e a criação de resgate (RedemptionsService) — os dois
  * nunca podem divergir sobre o que é "resgatável" nesse instante. */
-export function offerAvailabilityWhere(partnerId?: string): Prisma.OfferWhereInput {
+export function offerAvailabilityWhere(
+  partnerId?: string,
+  filters?: { category?: string; featured?: boolean },
+): Prisma.OfferWhereInput {
   const now = new Date();
 
   return {
     status: 'ACTIVE',
     partner: { status: 'ACTIVE' },
+    categoryData: {
+      active: true,
+      ...(filters?.category
+        ? { OR: [{ slug: filters.category }, { name: filters.category }] }
+        : {}),
+    },
     OR: [{ validFrom: null }, { validFrom: { lte: now } }],
     AND: [{ OR: [{ validUntil: null }, { validUntil: { gte: now } }] }],
     ...(partnerId ? { partnerId } : {}),
+    ...(filters?.featured === undefined ? {} : { featured: filters.featured }),
   };
 }

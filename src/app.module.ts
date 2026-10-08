@@ -18,6 +18,7 @@ import { PlatformAdminModule } from './modules/platform-admin/platform-admin.mod
 import { PlatformOrganizationsModule } from './modules/platform-admin/organizations/platform-organizations.module';
 import { PlatformPartnersModule } from './modules/platform-admin/partners/platform-partners.module';
 import { PlatformOffersModule } from './modules/platform-admin/offers/platform-offers.module';
+import { PlatformOfferCategoriesModule } from './modules/platform-admin/offer-categories/platform-offer-categories.module';
 import { PlatformDashboardModule } from './modules/platform-admin/dashboard/platform-dashboard.module';
 import { PlatformRedemptionsModule } from './modules/platform-admin/redemptions/platform-redemptions.module';
 import { PlatformBatchesModule } from './modules/platform-admin/batches/platform-batches.module';
@@ -72,6 +73,7 @@ import { OrganizationValuesModule } from './modules/organization-values/organiza
     PlatformOrganizationsModule,
     PlatformPartnersModule,
     PlatformOffersModule,
+    PlatformOfferCategoriesModule,
     PlatformDashboardModule,
     PlatformRedemptionsModule,
     PlatformBatchesModule,

@@ -14,6 +14,8 @@ export const offerCatalogItemSchema = z.object({
   description: z.string(),
   category: z.string(),
   costInCoins: z.number().int(),
+  originalCost: z.number().int().nullable(),
+  featured: z.boolean(),
   imageUrl: z.string().nullable(),
   validFrom: z.string().datetime().nullable(),
   validUntil: z.string().datetime().nullable(),

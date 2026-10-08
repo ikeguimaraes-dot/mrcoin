@@ -7,7 +7,10 @@ import { CurrentPlatformAdmin } from '../decorators/current-platform-admin.decor
 import { PlatformAdminJwtPayload } from '../../../common/guards/jwt-payload.types';
 import { PlatformOffersService } from './platform-offers.service';
 import { CreateOfferDto, createOfferSchema } from './dto/create-offer.schema';
-import { ListPlatformOffersQueryDto, listPlatformOffersQuerySchema } from './dto/list-offers-query.schema';
+import {
+  ListPlatformOffersQueryDto,
+  listPlatformOffersQuerySchema,
+} from './dto/list-offers-query.schema';
 import { OfferListResponseDto, OfferSummaryDto } from './dto/offer-summary.schema';
 import { UpdatePlatformOfferDto, updatePlatformOfferSchema } from './dto/update-offer.schema';
 
@@ -30,9 +33,14 @@ export class PlatformOffersController {
 
   @Get()
   @PlatformAdminAuth()
-  @ApiOperation({ summary: 'Lista todas as ofertas, qualquer status, paginado por cursor, com filtro opcional por partnerId' })
+  @ApiOperation({
+    summary:
+      'Lista todas as ofertas, qualquer status, paginado por cursor, com filtro opcional por partnerId',
+  })
   @ApiOkResponse({ type: OfferListResponseDto })
-  list(@Query(new ZodValidationPipe(listPlatformOffersQuerySchema)) query: ListPlatformOffersQueryDto) {
+  list(
+    @Query(new ZodValidationPipe(listPlatformOffersQuerySchema)) query: ListPlatformOffersQueryDto,
+  ) {
     return this.offersService.list(query);
   }
 

@@ -14,6 +14,8 @@ interface OfferCatalogBody {
   description: string;
   category: string;
   costInCoins: number;
+  originalCost: number | null;
+  featured: boolean;
   imageUrl: string | null;
   validFrom: string | null;
   validUntil: string | null;
@@ -36,7 +38,9 @@ const createdUserIds: string[] = [];
 let app: INestApplication;
 let server: Server;
 
-async function createPartner(status: PartnerStatus = 'ACTIVE'): Promise<{ id: string; name: string }> {
+async function createPartner(
+  status: PartnerStatus = 'ACTIVE',
+): Promise<{ id: string; name: string }> {
   const suffix = randomUUID();
   const partner = await prisma.partner.create({
     data: {
@@ -61,16 +65,27 @@ async function createOffer(
     costInCoins: number;
     perUserLimit: number | null;
     imageUrl: string | null;
+    category: string;
+    originalCost: number | null;
+    featured: boolean;
   }> = {},
 ): Promise<{ id: string; title: string }> {
   const suffix = randomUUID();
+  const category = overrides.category ?? 'Teste';
+  await prisma.offerCategory.upsert({
+    where: { name: category },
+    update: { active: true },
+    create: { name: category, slug: category.toLowerCase().replace(/\s+/g, '-') },
+  });
   const offer = await prisma.offer.create({
     data: {
       partnerId,
       title: `Offer Test ${suffix}`,
       description: `Offer Test ${suffix}`,
-      category: 'Teste',
+      category,
       costInCoins: overrides.costInCoins ?? 100,
+      originalCost: overrides.originalCost,
+      featured: overrides.featured,
       imageUrl: overrides.imageUrl,
       validFrom: overrides.validFrom,
       validUntil: overrides.validUntil,
@@ -85,7 +100,11 @@ async function createOffer(
 async function createUserToken(): Promise<string> {
   const suffix = randomUUID();
   const user = await prisma.user.create({
-    data: { cpfEncrypted: `enc-${suffix}`, cpfHash: `hash-${suffix}`, name: `Offer Test User ${suffix}` },
+    data: {
+      cpfEncrypted: `enc-${suffix}`,
+      cpfHash: `hash-${suffix}`,
+      name: `Offer Test User ${suffix}`,
+    },
   });
   createdUserIds.push(user.id);
   return jwtService.signAsync({ sub: user.id, type: 'user' });
@@ -173,7 +192,9 @@ describe('GET /offers (catálogo do app) — filtro em duas camadas', () => {
 
   it('oferta com validUntil no passado NÃO aparece, mesmo ACTIVE', async () => {
     const partner = await createPartner('ACTIVE');
-    const offer = await createOffer(partner.id, { validUntil: new Date(Date.now() - 1000 * 60 * 60 * 24) });
+    const offer = await createOffer(partner.id, {
+      validUntil: new Date(Date.now() - 1000 * 60 * 60 * 24),
+    });
     const token = await createUserToken();
 
     const response = await request(server)
@@ -187,7 +208,9 @@ describe('GET /offers (catálogo do app) — filtro em duas camadas', () => {
 
   it('oferta com validFrom no futuro NÃO aparece ainda', async () => {
     const partner = await createPartner('ACTIVE');
-    const offer = await createOffer(partner.id, { validFrom: new Date(Date.now() + 1000 * 60 * 60 * 24) });
+    const offer = await createOffer(partner.id, {
+      validFrom: new Date(Date.now() + 1000 * 60 * 60 * 24),
+    });
     const token = await createUserToken();
 
     const response = await request(server)
@@ -232,6 +255,56 @@ describe('GET /offers (catálogo do app) — filtro em duas camadas', () => {
     expect(ids).not.toContain(offerB.id);
   });
 
+  it('?category= filtra pelo slug da categoria', async () => {
+    const partner = await createPartner('ACTIVE');
+    const selected = await createOffer(partner.id, { category: 'Lazer Teste' });
+    const other = await createOffer(partner.id, { category: 'Serviços Teste' });
+    const token = await createUserToken();
+
+    const response = await request(server)
+      .get('/offers')
+      .query({ category: 'lazer-teste' })
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+
+    const ids = (response.body as ListResponseBody<OfferCatalogBody>).items.map((item) => item.id);
+    expect(ids).toContain(selected.id);
+    expect(ids).not.toContain(other.id);
+  });
+
+  it('?featured=true retorna apenas ofertas em destaque', async () => {
+    const partner = await createPartner('ACTIVE');
+    const featured = await createOffer(partner.id, { featured: true });
+    const regular = await createOffer(partner.id, { featured: false });
+    const token = await createUserToken();
+
+    const response = await request(server)
+      .get('/offers')
+      .query({ featured: 'true' })
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+
+    const ids = (response.body as ListResponseBody<OfferCatalogBody>).items.map((item) => item.id);
+    expect(ids).toContain(featured.id);
+    expect(ids).not.toContain(regular.id);
+  });
+
+  it('originalCost nulo é exposto sem quebrar o catálogo', async () => {
+    const partner = await createPartner('ACTIVE');
+    const offer = await createOffer(partner.id, { originalCost: null });
+    const token = await createUserToken();
+
+    const response = await request(server)
+      .get('/offers')
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+
+    const found = (response.body as ListResponseBody<OfferCatalogBody>).items.find(
+      (item) => item.id === offer.id,
+    );
+    expect(found?.originalCost).toBeNull();
+  });
+
   it('sem token retorna 401', async () => {
     await request(server).get('/offers').expect(401);
   });
@@ -266,11 +339,13 @@ describe('GET /offers/:id', () => {
         'category',
         'costInCoins',
         'description',
+        'featured',
         'id',
         'imageUrl',
         'partner',
         'perUserLimit',
         'title',
+        'originalCost',
         'validFrom',
         'validUntil',
       ].sort(),

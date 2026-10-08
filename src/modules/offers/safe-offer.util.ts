@@ -8,6 +8,8 @@ export const SAFE_OFFER_CATALOG_SELECT = {
   description: true,
   category: true,
   costInCoins: true,
+  originalCost: true,
+  featured: true,
   imageUrl: true,
   validFrom: true,
   validUntil: true,
@@ -27,6 +29,8 @@ export const SAFE_OFFER_PLATFORM_SELECT = {
   description: true,
   category: true,
   costInCoins: true,
+  originalCost: true,
+  featured: true,
   imageUrl: true,
   validFrom: true,
   validUntil: true,
@@ -37,4 +41,6 @@ export const SAFE_OFFER_PLATFORM_SELECT = {
   partner: { select: { id: true, name: true } },
 } satisfies Prisma.OfferSelect;
 
-export type SafeOfferPlatform = Prisma.OfferGetPayload<{ select: typeof SAFE_OFFER_PLATFORM_SELECT }>;
+export type SafeOfferPlatform = Prisma.OfferGetPayload<{
+  select: typeof SAFE_OFFER_PLATFORM_SELECT;
+}>;

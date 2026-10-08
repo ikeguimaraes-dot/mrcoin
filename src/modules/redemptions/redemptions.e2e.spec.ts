@@ -109,13 +109,17 @@ async function createUserWithWallet(
   const membership = await prisma.membership.create({
     data: { userId: user.id, organizationId, type: 'CUSTOMER' },
   });
-  const wallet = await prisma.wallet.create({ data: { membershipId: membership.id, cachedBalance } });
+  const wallet = await prisma.wallet.create({
+    data: { membershipId: membership.id, cachedBalance },
+  });
   const token = await jwtService.signAsync({ sub: user.id, type: 'user' });
 
   return { userId: user.id, membershipId: membership.id, walletId: wallet.id, token };
 }
 
-async function createPartner(status: PartnerStatus = 'ACTIVE'): Promise<{ id: string; name: string; token: string }> {
+async function createPartner(
+  status: PartnerStatus = 'ACTIVE',
+): Promise<{ id: string; name: string; token: string }> {
   const suffix = randomUUID();
   const partner = await prisma.partner.create({
     data: {
@@ -134,9 +138,18 @@ async function createPartner(status: PartnerStatus = 'ACTIVE'): Promise<{ id: st
 
 async function createOffer(
   partnerId: string,
-  overrides: Partial<{ costInCoins: number; perUserLimit: number | null; status: OfferStatus }> = {},
+  overrides: Partial<{
+    costInCoins: number;
+    perUserLimit: number | null;
+    status: OfferStatus;
+  }> = {},
 ): Promise<{ id: string; costInCoins: number }> {
   const suffix = randomUUID();
+  await prisma.offerCategory.upsert({
+    where: { name: 'Teste' },
+    update: { active: true },
+    create: { name: 'Teste', slug: 'teste' },
+  });
   const offer = await prisma.offer.create({
     data: {
       partnerId,
@@ -169,7 +182,9 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await app.close();
-  const memberships = await prisma.membership.findMany({ where: { userId: { in: createdUserIds } } });
+  const memberships = await prisma.membership.findMany({
+    where: { userId: { in: createdUserIds } },
+  });
   const walletIds = (
     await prisma.wallet.findMany({ where: { membershipId: { in: memberships.map((m) => m.id) } } })
   ).map((w) => w.id);
@@ -233,7 +248,9 @@ describe('Fluxo completo — compra com PIN debita na hora', () => {
     expect(delivered.deliveredAt).toBeTruthy();
 
     // Nenhum novo débito aconteceu na entrega — saldo/entries continuam iguais.
-    const walletAfterDelivery = await prisma.wallet.findUniqueOrThrow({ where: { id: user.walletId } });
+    const walletAfterDelivery = await prisma.wallet.findUniqueOrThrow({
+      where: { id: user.walletId },
+    });
     expect(walletAfterDelivery.cachedBalance).toBe(850);
     const entriesAfterDelivery = await prisma.ledgerEntry.count({
       where: { referenceId: created.id, referenceType: 'REDEMPTION' },
@@ -387,7 +404,9 @@ describe('Garantias inegociáveis', () => {
     results.forEach((res) => expect(res.status).toBe(201));
     expect((results[0]?.body as RedemptionBody).id).toBe((results[1]?.body as RedemptionBody).id);
 
-    const entryCount = await prisma.ledgerEntry.count({ where: { walletId: user.walletId, referenceType: 'REDEMPTION' } });
+    const entryCount = await prisma.ledgerEntry.count({
+      where: { walletId: user.walletId, referenceType: 'REDEMPTION' },
+    });
     expect(entryCount).toBe(1);
 
     const wallet = await prisma.wallet.findUniqueOrThrow({ where: { id: user.walletId } });
@@ -480,11 +499,17 @@ describe('Garantias inegociáveis', () => {
 
     // O débito JÁ aconteceu — o saldo já caiu — mas nenhuma linha de Redemption existe ainda,
     // porque foi exatamente o create() seguinte que "quebrou".
-    const walletAfterCrash = await prisma.wallet.findUniqueOrThrow({ where: { id: user.walletId } });
+    const walletAfterCrash = await prisma.wallet.findUniqueOrThrow({
+      where: { id: user.walletId },
+    });
     expect(walletAfterCrash.cachedBalance).toBe(420);
-    const entryCountAfterCrash = await prisma.ledgerEntry.count({ where: { walletId: user.walletId, referenceType: 'REDEMPTION' } });
+    const entryCountAfterCrash = await prisma.ledgerEntry.count({
+      where: { walletId: user.walletId, referenceType: 'REDEMPTION' },
+    });
     expect(entryCountAfterCrash).toBe(1);
-    const redemptionCountAfterCrash = await prisma.redemption.count({ where: { idempotencyKey: key } });
+    const redemptionCountAfterCrash = await prisma.redemption.count({
+      where: { idempotencyKey: key },
+    });
     expect(redemptionCountAfterCrash).toBe(0);
 
     // Retry — LedgerService.post() é idempotente pela própria chave: devolve a MESMA entry
@@ -497,9 +522,13 @@ describe('Garantias inegociáveis', () => {
       .expect(201);
     expect((retryRes.body as RedemptionBody).status).toBe('CONFIRMED');
 
-    const walletAfterRetry = await prisma.wallet.findUniqueOrThrow({ where: { id: user.walletId } });
+    const walletAfterRetry = await prisma.wallet.findUniqueOrThrow({
+      where: { id: user.walletId },
+    });
     expect(walletAfterRetry.cachedBalance).toBe(420);
-    const entryCountAfterRetry = await prisma.ledgerEntry.count({ where: { walletId: user.walletId, referenceType: 'REDEMPTION' } });
+    const entryCountAfterRetry = await prisma.ledgerEntry.count({
+      where: { walletId: user.walletId, referenceType: 'REDEMPTION' },
+    });
     expect(entryCountAfterRetry).toBe(1);
   });
 });
@@ -556,7 +585,9 @@ describe('Idempotency-Key', () => {
       .expect(201);
 
     expect((retry.body as RedemptionBody).id).toBe((first.body as RedemptionBody).id);
-    expect((retry.body as RedemptionBody).pickupCode).toBe((first.body as RedemptionBody).pickupCode);
+    expect((retry.body as RedemptionBody).pickupCode).toBe(
+      (first.body as RedemptionBody).pickupCode,
+    );
 
     const count = await prisma.redemption.count({ where: { idempotencyKey: key } });
     expect(count).toBe(1);
@@ -631,7 +662,17 @@ describe('Validações e autenticação', () => {
       .expect(201);
 
     expect(Object.keys(created.body as object).sort()).toEqual(
-      ['amount', 'confirmedAt', 'deliveredAt', 'id', 'offerId', 'partnerId', 'pickupCode', 'qrPayload', 'status'].sort(),
+      [
+        'amount',
+        'confirmedAt',
+        'deliveredAt',
+        'id',
+        'offerId',
+        'partnerId',
+        'pickupCode',
+        'qrPayload',
+        'status',
+      ].sort(),
     );
     expect(created.body).not.toHaveProperty('membershipId');
     expect(created.body).not.toHaveProperty('walletId');
@@ -668,7 +709,9 @@ describe('Validações e autenticação', () => {
 
     // Trava por lista: qualquer campo novo no schema de resposta precisa passar por essa
     // lista (partner-redemption-confirm-response.schema.ts) antes de sair em produção.
-    expect(Object.keys(confirmRes.body as object).sort()).toEqual(PARTNER_REDEMPTION_CONFIRM_ALLOWED_FIELDS);
+    expect(Object.keys(confirmRes.body as object).sort()).toEqual(
+      PARTNER_REDEMPTION_CONFIRM_ALLOWED_FIELDS,
+    );
 
     for (const forbiddenField of [
       'cpf',
