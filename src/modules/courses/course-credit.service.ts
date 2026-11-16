@@ -1,9 +1,10 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, UnprocessableEntityException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { LedgerService } from '../ledger/ledger.service';
 import { InsufficientCoinStockException } from '../distributions/exceptions/insufficient-coin-stock.exception';
 import { executeFifoPlan, planFifoOrThrow } from '../distributions/fifo-batch-consumption.util';
 import { COURSE_COMPLETION_REWARD_COINS } from './courses.constants';
+import { assertMembershipCanEarn } from '../members/membership-earning.util';
 
 const COURSE_COMPLETION_DESCRIPTION = 'Conclusão de curso';
 
@@ -46,7 +47,9 @@ export class CourseCreditService {
     }
 
     if (!completion.membership.wallet) {
-      this.logger.error(`CourseCompletion ${courseCompletionId} sem Wallet — estado inconsistente.`);
+      this.logger.error(
+        `CourseCompletion ${courseCompletionId} sem Wallet — estado inconsistente.`,
+      );
       return false;
     }
 
@@ -54,6 +57,7 @@ export class CourseCreditService {
 
     try {
       return await this.prisma.$transaction(async (tx) => {
+        await assertMembershipCanEarn(tx, completion.membershipId);
         const claimed = await tx.courseCompletion.updateMany({
           where: { id: completion.id, creditStatus: 'PENDING' },
           data: { creditStatus: 'CREDITED' },
@@ -64,7 +68,11 @@ export class CourseCreditService {
           return true;
         }
 
-        const plan = await planFifoOrThrow(tx, completion.organizationId, COURSE_COMPLETION_REWARD_COINS);
+        const plan = await planFifoOrThrow(
+          tx,
+          completion.organizationId,
+          COURSE_COMPLETION_REWARD_COINS,
+        );
         // Pode fracionar em mais de um LedgerEntry (lote com pouco saldo bem na hora) — por
         // isso não guardamos um ledgerEntryId único; a ligação é via referenceType+referenceId
         // (ver comentário do model no schema).
@@ -84,6 +92,12 @@ export class CourseCreditService {
         return true;
       });
     } catch (error) {
+      if (
+        error instanceof UnprocessableEntityException &&
+        (error.getResponse() as { code?: string }).code === 'MEMBERSHIP_CANNOT_EARN'
+      ) {
+        return false;
+      }
       if (error instanceof InsufficientCoinStockException) {
         return false;
       }

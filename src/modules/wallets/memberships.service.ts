@@ -18,6 +18,7 @@ export class MembershipsService {
       organizationName: membership.organization.name,
       membershipType: membership.type,
       membershipStatus: membership.status,
+      departedAt: membership.departedAt?.toISOString() ?? null,
       walletBalance: membership.wallet?.cachedBalance ?? 0,
     }));
   }

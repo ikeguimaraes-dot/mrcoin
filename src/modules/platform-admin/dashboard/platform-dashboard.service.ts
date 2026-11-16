@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { getUtcMonthRange } from '../../../common/date/utc-month-range.util';
+import { databaseTable } from '../../../common/database/table-reference.util';
 
 const RANKING_LIMIT = 10;
 const RECENT_ACTIVITY_LIMIT = 10;
@@ -29,10 +30,19 @@ export interface PlatformDashboard {
   };
   timeseries: {
     months: number;
-    points: Array<{ month: string; coinsIssued: number; revenueInCents: number; coinsRedeemed: number }>;
+    points: Array<{
+      month: string;
+      coinsIssued: number;
+      revenueInCents: number;
+      coinsRedeemed: number;
+    }>;
   };
   rankings: {
-    topOrganizationsByCoinsIssued: Array<{ organizationId: string; name: string; coinsIssued: number }>;
+    topOrganizationsByCoinsIssued: Array<{
+      organizationId: string;
+      name: string;
+      coinsIssued: number;
+    }>;
     topPartnersByConfirmedRedemptions: Array<{
       partnerId: string;
       name: string;
@@ -121,7 +131,7 @@ export class PlatformDashboardService {
           COALESCE(SUM(cb."totalCoins"), 0)::int AS coins_issued,
           COALESCE(SUM(cb."priceInCents"), 0)::int AS revenue_in_cents
         FROM months
-        LEFT JOIN "CoinBatch" cb
+        LEFT JOIN ${databaseTable('CoinBatch')} cb
           ON date_trunc('month', cb."updatedAt") = months.month
           AND cb.status = 'PAID'
         GROUP BY months.month
@@ -143,8 +153,8 @@ export class PlatformDashboardService {
             date_trunc('month', le."createdAt")::date AS entry_month,
             ro."type" AS reversal_of_type,
             ro."referenceType" AS reversal_of_reference_type
-          FROM "LedgerEntry" le
-          LEFT JOIN "LedgerEntry" ro ON ro.id = le."reversalOfId"
+          FROM ${databaseTable('LedgerEntry')} le
+          LEFT JOIN ${databaseTable('LedgerEntry')} ro ON ro.id = le."reversalOfId"
           WHERE le."createdAt" >= date_trunc('month', CURRENT_DATE) - (${TIMESERIES_MONTHS - 1}::int) * INTERVAL '1 month'
         )
         SELECT

@@ -3,6 +3,7 @@ import { JwtService } from '@nestjs/jwt';
 import { Request } from 'express';
 import { extractBearerToken } from './bearer-token.util';
 import { UserJwtPayload } from './jwt-payload.types';
+import { PrismaService } from '../../prisma/prisma.service';
 
 const INVALID_TOKEN_RESPONSE = { code: 'UNAUTHORIZED', message: 'Token inválido ou expirado.' };
 
@@ -14,7 +15,10 @@ const INVALID_TOKEN_RESPONSE = { code: 'UNAUTHORIZED', message: 'Token inválido
  */
 @Injectable()
 export class UserJwtGuard implements CanActivate {
-  constructor(private readonly jwtService: JwtService) {}
+  constructor(
+    private readonly jwtService: JwtService,
+    private readonly prisma: PrismaService,
+  ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context.switchToHttp().getRequest<Request>();
@@ -30,6 +34,12 @@ export class UserJwtGuard implements CanActivate {
     if (payload.type !== 'user') {
       throw new UnauthorizedException(INVALID_TOKEN_RESPONSE);
     }
+
+    const user = await this.prisma.user.findUnique({
+      where: { id: payload.sub },
+      select: { status: true },
+    });
+    if (!user || user.status !== 'ACTIVE') throw new UnauthorizedException(INVALID_TOKEN_RESPONSE);
 
     request.user = payload;
     return true;

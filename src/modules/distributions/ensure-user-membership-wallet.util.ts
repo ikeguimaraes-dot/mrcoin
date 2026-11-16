@@ -1,4 +1,5 @@
 import { MembershipType, Prisma } from '@prisma/client';
+import { assertMembershipCanEarn } from '../members/membership-earning.util';
 
 export interface EnsureUserMembershipWalletInput {
   cpfEncrypted: string;
@@ -48,6 +49,7 @@ export async function ensureUserMembershipWallet(
     update: {},
   });
 
+  await assertMembershipCanEarn(tx, membership.id);
   const existingWallet = await tx.wallet.findUnique({ where: { membershipId: membership.id } });
   const wallet = existingWallet ?? (await tx.wallet.create({ data: { membershipId: membership.id } }));
 

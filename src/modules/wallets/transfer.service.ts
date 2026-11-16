@@ -11,6 +11,7 @@ import { RecipientNotFoundException } from './exceptions/recipient-not-found.exc
 import { SelfTransferException } from './exceptions/self-transfer.exception';
 import { TransferDailyLimitExceededException } from './exceptions/transfer-daily-limit-exceeded.exception';
 import { CreateTransferInput } from './dto/create-transfer.schema';
+import { assertMembershipCanEarn } from '../members/membership-earning.util';
 import {
   RECIPIENT_SEARCH_MAX_RESULTS,
   TRANSFER_DAILY_LIMIT_COINS,
@@ -47,13 +48,21 @@ export class TransferService {
   ) {}
 
   /** Busca parcial por nome, só membros ACTIVE da mesma org, nunca o próprio remetente. */
-  async searchRecipients(userId: string, organizationId: string, query: string): Promise<RecipientListItem[]> {
-    const { membershipId: senderMembershipId } = await this.walletsService.resolveWalletId(userId, organizationId);
+  async searchRecipients(
+    userId: string,
+    organizationId: string,
+    query: string,
+  ): Promise<RecipientListItem[]> {
+    const { membershipId: senderMembershipId } = await this.walletsService.resolveWalletId(
+      userId,
+      organizationId,
+    );
 
     const memberships = await this.prisma.membership.findMany({
       where: {
         organizationId,
         status: 'ACTIVE',
+        departedAt: null,
         id: { not: senderMembershipId },
         user: { name: { contains: query, mode: 'insensitive' } },
       },
@@ -62,29 +71,42 @@ export class TransferService {
       take: RECIPIENT_SEARCH_MAX_RESULTS,
     });
 
-    return memberships.map((membership) => ({ membershipId: membership.id, name: membership.user.name }));
+    return memberships.map((membership) => ({
+      membershipId: membership.id,
+      name: membership.user.name,
+    }));
   }
 
-  async create(userId: string, input: CreateTransferInput, idempotencyKey: string): Promise<TransferResult> {
+  async create(
+    userId: string,
+    input: CreateTransferInput,
+    idempotencyKey: string,
+  ): Promise<TransferResult> {
     const existing = await this.prisma.transfer.findUnique({ where: { idempotencyKey } });
     if (existing) {
-      if (existing.toMembershipId !== input.recipientMembershipId || existing.amount !== input.amount) {
+      if (
+        existing.toMembershipId !== input.recipientMembershipId ||
+        existing.amount !== input.amount
+      ) {
         throw new IdempotencyConflictException(idempotencyKey, { transferId: existing.id });
       }
       return this.toResult(existing);
     }
 
-    const { membershipId: senderMembershipId, walletId: senderWalletId } = await this.walletsService.resolveWalletId(
-      userId,
-      input.organizationId,
-    );
+    const { membershipId: senderMembershipId, walletId: senderWalletId } =
+      await this.walletsService.resolveWalletId(userId, input.organizationId);
 
     if (input.recipientMembershipId === senderMembershipId) {
       throw new SelfTransferException();
     }
 
     const recipientMembership = await this.prisma.membership.findFirst({
-      where: { id: input.recipientMembershipId, organizationId: input.organizationId, status: 'ACTIVE' },
+      where: {
+        id: input.recipientMembershipId,
+        organizationId: input.organizationId,
+        status: 'ACTIVE',
+        departedAt: null,
+      },
       include: { wallet: true, user: { select: { name: true } } },
     });
     if (!recipientMembership || !recipientMembership.wallet) {
@@ -103,12 +125,19 @@ export class TransferService {
     });
     const alreadySent = sentTodayAgg._sum.amount ?? 0;
     if (alreadySent + input.amount > TRANSFER_DAILY_LIMIT_COINS) {
-      throw new TransferDailyLimitExceededException(TRANSFER_DAILY_LIMIT_COINS, alreadySent, input.amount);
+      throw new TransferDailyLimitExceededException(
+        TRANSFER_DAILY_LIMIT_COINS,
+        alreadySent,
+        input.amount,
+      );
     }
 
     await this.transactionPinService.verifyPin(userId, input.transactionPin);
 
-    const sender = await this.prisma.user.findUniqueOrThrow({ where: { id: userId }, select: { name: true } });
+    const sender = await this.prisma.user.findUniqueOrThrow({
+      where: { id: userId },
+      select: { name: true },
+    });
 
     // transferId determinístico a partir da Idempotency-Key do cliente — mesmo raciocínio
     // já usado em RedemptionsService.create(): duas requisições concorrentes (ou um retry)
@@ -116,16 +145,20 @@ export class TransferService {
     // do LedgerService (referenceId divergente) em vez de reconciliar.
     const transferId = createHash('sha256').update(`transfer:${idempotencyKey}`).digest('hex');
 
-    const { debitEntry, creditEntry } = await this.ledgerService.transferBetweenWallets({
-      fromWalletId: senderWalletId,
-      toWalletId: recipientMembership.wallet.id,
-      amount: input.amount,
-      referenceId: transferId,
-      debitDescription: `Transferência enviada para ${recipientMembership.user.name}`,
-      creditDescription: `Transferência recebida de ${sender.name}`,
-      debitIdempotencyKey: `transfer-debit:${idempotencyKey}`,
-      creditIdempotencyKey: `transfer-credit:${idempotencyKey}`,
-    });
+    const { debitEntry, creditEntry } = await this.ledgerService.transferBetweenWallets(
+      {
+        fromWalletId: senderWalletId,
+        toWalletId: recipientMembership.wallet.id,
+        amount: input.amount,
+        referenceId: transferId,
+        debitDescription: `Transferência enviada para ${recipientMembership.user.name}`,
+        creditDescription: `Transferência recebida de ${sender.name}`,
+        debitIdempotencyKey: `transfer-debit:${idempotencyKey}`,
+        creditIdempotencyKey: `transfer-credit:${idempotencyKey}`,
+      },
+      1,
+      (tx) => assertMembershipCanEarn(tx, recipientMembership.id),
+    );
 
     // upsert: se o processo já tivesse criado essa linha numa tentativa anterior (crash entre
     // o débito/crédito e este insert), não duplica nem falha — mesmo padrão de

@@ -155,6 +155,7 @@ enum AuditActorType {
 enum UserStatus {
   ACTIVE
   PENDING_CLAIM
+  DELETED
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -300,6 +301,24 @@ model User {
   memberships   Membership[]
   devices       Device[]
   refreshTokens UserRefreshToken[]
+  accountDeletionRequest AccountDeletionRequest?
+}
+
+/// Pedido confirmado pelo titular. Conclusão exige revisão dos registros de operações
+/// que precisam ser conservados, com justificativa comunicada ao titular.
+model AccountDeletionRequest {
+  id                   String   @id @default(cuid())
+  userId               String   @unique
+  user                 User     @relation(fields: [userId], references: [id])
+  requestedAt          DateTime @default(now())
+  deadlineAt           DateTime
+  completedAt          DateTime?
+  completedById        String?
+  retentionReason      String?
+  notificationEmail    String?
+  notificationSentAt   DateTime?
+
+  @@index([completedAt, deadlineAt])
 }
 
 /// Refresh token de sessão do usuário final (coins-app) — mesmo mecanismo do RefreshToken
@@ -348,6 +367,8 @@ model Membership {
   type           MembershipType
   externalRef    String?
   status         MembershipStatus @default(ACTIVE)
+  /// Desligamento comercial: preserva gasto do saldo; INACTIVE continua sendo bloqueio.
+  departedAt     DateTime?
   createdAt      DateTime         @default(now())
   updatedAt      DateTime         @updatedAt
 

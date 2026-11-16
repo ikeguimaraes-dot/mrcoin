@@ -7,6 +7,7 @@ export const membershipListItemSchema = z.object({
   organizationName: z.string(),
   membershipType: z.nativeEnum(MembershipType),
   membershipStatus: z.nativeEnum(MembershipStatus),
+  departedAt: z.string().datetime().nullable(),
   walletBalance: z.number().int(),
 });
 

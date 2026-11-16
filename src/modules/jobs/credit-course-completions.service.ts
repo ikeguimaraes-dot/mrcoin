@@ -39,7 +39,10 @@ export class CreditCourseCompletionsService {
 
       for (;;) {
         const pending = await this.prisma.courseCompletion.findMany({
-          where: { creditStatus: 'PENDING' },
+          where: {
+            creditStatus: 'PENDING',
+            membership: { status: 'ACTIVE', departedAt: null, user: { status: 'ACTIVE' } },
+          },
           orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
           take: COURSE_COMPLETION_CREDIT_BATCH_SIZE,
           ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
@@ -72,7 +75,11 @@ export class CreditCourseCompletionsService {
     }
   }
 
-  private async persist(jobRunId: string, status: JobRunStatus, details: CreditCourseCompletionsDetails): Promise<void> {
+  private async persist(
+    jobRunId: string,
+    status: JobRunStatus,
+    details: CreditCourseCompletionsDetails,
+  ): Promise<void> {
     await this.jobRunRecorder.finish(jobRunId, {
       status,
       issuesFound: details.stillPending,
@@ -88,7 +95,10 @@ export class CreditCourseCompletionsService {
     try {
       await this.persist(jobRunId, status, details);
     } catch (persistError) {
-      this.logger.error('Falha ao gravar JobRun de credit-course-completions', persistError as Error);
+      this.logger.error(
+        'Falha ao gravar JobRun de credit-course-completions',
+        persistError as Error,
+      );
     }
   }
 }

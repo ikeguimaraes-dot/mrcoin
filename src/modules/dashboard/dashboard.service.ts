@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { getUtcMonthRange } from '../../common/date/utc-month-range.util';
+import { databaseTable } from '../../common/database/table-reference.util';
 
 export interface DashboardSummary {
   availableBalance: number;
@@ -96,10 +97,10 @@ export class DashboardService {
           le."createdAt"::date AS entry_day,
           ro."type" AS reversal_of_type,
           ro."referenceType" AS reversal_of_reference_type
-        FROM "LedgerEntry" le
-        INNER JOIN "Wallet" w ON w.id = le."walletId"
-        INNER JOIN "Membership" m ON m.id = w."membershipId"
-        LEFT JOIN "LedgerEntry" ro ON ro.id = le."reversalOfId"
+        FROM ${databaseTable('LedgerEntry')} le
+        INNER JOIN ${databaseTable('Wallet')} w ON w.id = le."walletId"
+        INNER JOIN ${databaseTable('Membership')} m ON m.id = w."membershipId"
+        LEFT JOIN ${databaseTable('LedgerEntry')} ro ON ro.id = le."reversalOfId"
         WHERE m."organizationId" = ${organizationId}
           AND le."createdAt" >= (CURRENT_DATE - (${days}::int - 1) * INTERVAL '1 day')
       )

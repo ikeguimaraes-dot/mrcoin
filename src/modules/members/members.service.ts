@@ -1,7 +1,16 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
-import { Membership, MembershipStatus, MembershipType, Prisma, User, UserStatus, Wallet } from '@prisma/client';
+import { Injectable, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
+import {
+  Membership,
+  MembershipStatus,
+  MembershipType,
+  Prisma,
+  User,
+  UserStatus,
+  Wallet,
+} from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { hashCpf } from '../../common/crypto/cpf-crypto.util';
+import { databaseTable } from '../../common/database/table-reference.util';
 import { LedgerService } from '../ledger/ledger.service';
 import { MEMBER_LIST_PAGE_SIZE } from './members.constants';
 import { ListMembersQuery } from './dto/list-members-query.schema';
@@ -26,6 +35,43 @@ export class MembersService {
     private readonly prisma: PrismaService,
     private readonly ledgerService: LedgerService,
   ) {}
+
+  async departMember(
+    organizationId: string,
+    membershipId: string,
+    adminUserId: string,
+    ip?: string,
+  ) {
+    return this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT "id" FROM ${databaseTable('Membership')} WHERE "id" = ${membershipId} AND "organizationId" = ${organizationId} FOR UPDATE`;
+      const membership = await tx.membership.findFirst({
+        where: { id: membershipId, organizationId },
+      });
+      if (!membership)
+        throw new NotFoundException({ code: 'NOT_FOUND', message: 'Membro não encontrado.' });
+      if (membership.status !== 'ACTIVE') {
+        throw new UnprocessableEntityException({
+          code: 'MEMBERSHIP_BLOCKED',
+          message: 'Um vínculo bloqueado não pode ser liberado por desligamento.',
+        });
+      }
+      if (membership.departedAt)
+        return { membershipId, departedAt: membership.departedAt.toISOString() };
+      const departedAt = new Date();
+      await tx.membership.update({ where: { id: membershipId }, data: { departedAt } });
+      await tx.auditLog.create({
+        data: {
+          organizationId,
+          actorType: 'ADMIN',
+          actorAdminUserId: adminUserId,
+          action: 'MEMBER_DEPARTED',
+          payload: { membershipId, balancePreserved: true },
+          ip: ip ?? 'unknown',
+        },
+      });
+      return { membershipId, departedAt: departedAt.toISOString() };
+    });
+  }
 
   async listMembers(
     organizationId: string,

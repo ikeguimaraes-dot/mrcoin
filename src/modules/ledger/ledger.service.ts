@@ -125,6 +125,7 @@ export class LedgerService {
   async transferBetweenWallets(
     input: TransferBetweenWalletsInput,
     attempt = 1,
+    validateRecipient?: (tx: TransactionClient) => Promise<void>,
   ): Promise<{ debitEntry: LedgerEntry; creditEntry: LedgerEntry }> {
     const [existingDebit, existingCredit] = await Promise.all([
       this.prisma.ledgerEntry.findUnique({ where: { idempotencyKey: input.debitIdempotencyKey } }),
@@ -135,19 +136,26 @@ export class LedgerService {
     }
 
     try {
-      return await this.prisma.$transaction((tx) => this.executeTransferEntries(tx, input));
+      return await this.prisma.$transaction(async (tx) => {
+        if (validateRecipient) await validateRecipient(tx);
+        return this.executeTransferEntries(tx, input);
+      });
     } catch (error) {
       if (error instanceof LedgerVersionConflictError) {
         if (attempt >= MAX_RETRIES) {
           throw new LedgerConcurrencyException(input.fromWalletId, attempt);
         }
-        return this.transferBetweenWallets(input, attempt + 1);
+        return this.transferBetweenWallets(input, attempt + 1, validateRecipient);
       }
 
       if (this.isIdempotencyKeyUniqueViolation(error)) {
         const [debitEntry, creditEntry] = await Promise.all([
-          this.prisma.ledgerEntry.findUniqueOrThrow({ where: { idempotencyKey: input.debitIdempotencyKey } }),
-          this.prisma.ledgerEntry.findUniqueOrThrow({ where: { idempotencyKey: input.creditIdempotencyKey } }),
+          this.prisma.ledgerEntry.findUniqueOrThrow({
+            where: { idempotencyKey: input.debitIdempotencyKey },
+          }),
+          this.prisma.ledgerEntry.findUniqueOrThrow({
+            where: { idempotencyKey: input.creditIdempotencyKey },
+          }),
         ]);
         return { debitEntry, creditEntry };
       }

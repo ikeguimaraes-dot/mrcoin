@@ -48,7 +48,12 @@ export class UserTokenService {
       this.createRefreshTokenRecord(userId, family, meta),
     ]);
 
-    return { accessToken, refreshToken, tokenType: 'Bearer', expiresIn: USER_ACCESS_TOKEN_TTL_DAYS * 24 * 60 * 60 };
+    return {
+      accessToken,
+      refreshToken,
+      tokenType: 'Bearer',
+      expiresIn: USER_ACCESS_TOKEN_TTL_DAYS * 24 * 60 * 60,
+    };
   }
 
   async rotateRefreshToken(rawToken: string, meta: RequestMeta = {}): Promise<UserTokenPair> {
@@ -61,13 +66,21 @@ export class UserTokenService {
 
     if (existing.revokedAt) {
       await this.revokeFamily(existing.family);
-      this.logger.warn(`Reuso de refresh token detectado — family ${existing.family} revogada (userId=${existing.userId}).`);
+      this.logger.warn(
+        `Reuso de refresh token detectado — family ${existing.family} revogada (userId=${existing.userId}).`,
+      );
       throw new InvalidRefreshTokenException();
     }
 
     if (existing.expiresAt < new Date()) {
       throw new InvalidRefreshTokenException();
     }
+
+    const user = await this.prisma.user.findUnique({
+      where: { id: existing.userId },
+      select: { status: true },
+    });
+    if (!user || user.status !== 'ACTIVE') throw new InvalidRefreshTokenException();
 
     // CAS: só prossegue se FOMOS nós a revogar (perde a corrida se outra rotação
     // concorrente do mesmo token já revogou entre o findUnique e aqui) — mesma técnica do
@@ -81,7 +94,11 @@ export class UserTokenService {
       throw new InvalidRefreshTokenException();
     }
 
-    const { rawToken: newRawToken, id: newId } = await this.createRefreshTokenRecord(existing.userId, existing.family, meta);
+    const { rawToken: newRawToken, id: newId } = await this.createRefreshTokenRecord(
+      existing.userId,
+      existing.family,
+      meta,
+    );
 
     await this.prisma.userRefreshToken.update({
       where: { id: existing.id },

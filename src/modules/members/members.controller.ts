@@ -1,4 +1,7 @@
-import { Controller, Get, Param, Query } from '@nestjs/common';
+import { Controller, Get, Param, Post, Query, Req } from '@nestjs/common';
+import { Request } from 'express';
+import { CurrentAdmin } from '../../common/decorators/current-admin.decorator';
+import { AdminJwtPayload } from '../../common/guards/jwt-payload.types';
 import { ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { AdminAuth } from '../../common/decorators/admin-auth.decorator';
 import { TenantOrganizationId } from '../../common/decorators/tenant-organization-id.decorator';
@@ -17,9 +20,26 @@ import { LedgerEntryListResponseDto } from '../ledger/dto/ledger-entry-response.
 export class MembersController {
   constructor(private readonly membersService: MembersService) {}
 
+  @Post(':membershipId/departure')
+  @AdminAuth('OWNER', 'MANAGER')
+  @ApiOperation({
+    summary:
+      'Registra saída da empresa: mantém carteira e saldo para gasto e interrompe novos ganhos',
+  })
+  depart(
+    @TenantOrganizationId() organizationId: string,
+    @Param('membershipId') membershipId: string,
+    @CurrentAdmin() admin: AdminJwtPayload,
+    @Req() request: Request,
+  ) {
+    return this.membersService.departMember(organizationId, membershipId, admin.sub, request.ip);
+  }
+
   @Get()
   @AdminAuth()
-  @ApiOperation({ summary: 'Diretório paginado de membros da organização, com filtro opcional por CPF' })
+  @ApiOperation({
+    summary: 'Diretório paginado de membros da organização, com filtro opcional por CPF',
+  })
   @ApiOkResponse({ type: ListMembersResponseDto })
   listMembers(
     @TenantOrganizationId() organizationId: string,
@@ -32,7 +52,10 @@ export class MembersController {
   @AdminAuth()
   @ApiOperation({ summary: 'Detalhe de um membro da organização do chamador' })
   @ApiOkResponse({ type: MemberResponseDto })
-  getMember(@TenantOrganizationId() organizationId: string, @Param('membershipId') membershipId: string) {
+  getMember(
+    @TenantOrganizationId() organizationId: string,
+    @Param('membershipId') membershipId: string,
+  ) {
     return this.membersService.getMember(organizationId, membershipId);
   }
 

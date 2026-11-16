@@ -7,6 +7,8 @@ import { IdempotencyConflictException } from '../distributions/exceptions/idempo
 import { NoSpinAvailableException } from './exceptions/no-spin-available.exception';
 import { drawSector } from './sector-draw.util';
 import { SPIN_RESERVED_AMOUNT, SPIN_SECTORS } from './spins.constants';
+import { assertMembershipCanEarn } from '../members/membership-earning.util';
+import { releasePendingSpin } from './release-pending-spin.util';
 
 export interface RedeemSpinResult {
   sectorIndex: number;
@@ -36,6 +38,12 @@ export class SpinsService {
   async getAvailableCount(userId: string, organizationId: string): Promise<SpinsAvailableResult> {
     const { membershipId } = await this.walletsService.resolveWalletId(userId, organizationId);
 
+    const membership = await this.prisma.membership.findUniqueOrThrow({
+      where: { id: membershipId },
+      select: { departedAt: true },
+    });
+    if (membership.departedAt) return { availableSpins: 0, sectors: Array.from(SPIN_SECTORS) };
+
     await this.expireCallerSpins(membershipId);
 
     const availableSpins = await this.prisma.spin.count({
@@ -45,12 +53,25 @@ export class SpinsService {
     return { availableSpins, sectors: Array.from(SPIN_SECTORS) };
   }
 
-  async redeem(userId: string, organizationId: string, idempotencyKey: string): Promise<RedeemSpinResult> {
-    const { membershipId, walletId } = await this.walletsService.resolveWalletId(userId, organizationId);
+  async redeem(
+    userId: string,
+    organizationId: string,
+    idempotencyKey: string,
+  ): Promise<RedeemSpinResult> {
+    const { membershipId, walletId } = await this.walletsService.resolveWalletId(
+      userId,
+      organizationId,
+    );
 
-    const existing = await this.prisma.spin.findFirst({ where: { redeemIdempotencyKey: idempotencyKey } });
+    const existing = await this.prisma.spin.findFirst({
+      where: { redeemIdempotencyKey: idempotencyKey },
+    });
     if (existing) {
-      if (existing.membershipId !== membershipId || existing.sectorIndex === null || existing.coinsAwarded === null) {
+      if (
+        existing.membershipId !== membershipId ||
+        existing.sectorIndex === null ||
+        existing.coinsAwarded === null
+      ) {
         throw new IdempotencyConflictException(idempotencyKey, { spinId: existing.id });
       }
       return { sectorIndex: existing.sectorIndex, coinsAwarded: existing.coinsAwarded };
@@ -72,7 +93,13 @@ export class SpinsService {
       }
 
       const { sectorIndex, coinsAwarded } = drawSector();
-      const claimed = await this.claimAndCredit(candidate, walletId, sectorIndex, coinsAwarded, idempotencyKey);
+      const claimed = await this.claimAndCredit(
+        candidate,
+        walletId,
+        sectorIndex,
+        coinsAwarded,
+        idempotencyKey,
+      );
 
       if (claimed) {
         return { sectorIndex, coinsAwarded };
@@ -93,6 +120,7 @@ export class SpinsService {
     idempotencyKey: string,
   ): Promise<boolean> {
     return this.prisma.$transaction(async (tx) => {
+      await assertMembershipCanEarn(tx, candidate.membershipId);
       const claimed = await tx.spin.updateMany({
         where: { id: candidate.id, status: 'PENDING' },
         data: {
@@ -150,14 +178,6 @@ export class SpinsService {
   }
 
   private async expireOne(spin: Spin): Promise<void> {
-    await this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
-      const updated = await tx.spin.updateMany({ where: { id: spin.id, status: 'PENDING' }, data: { status: 'EXPIRED' } });
-      if (updated.count === 1) {
-        await tx.coinBatch.update({
-          where: { id: spin.reservedBatchId },
-          data: { remainingCoins: { increment: SPIN_RESERVED_AMOUNT } },
-        });
-      }
-    });
+    await this.prisma.$transaction((tx: Prisma.TransactionClient) => releasePendingSpin(tx, spin));
   }
 }

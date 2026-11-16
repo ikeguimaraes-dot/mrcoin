@@ -14,9 +14,17 @@ import { UserTokenService } from './user-token.service';
 import { MeController } from './me.controller';
 import { MeService } from './me.service';
 import { TransactionPinService } from './transaction-pin.service';
+import { PlatformAdminModule } from '../platform-admin/platform-admin.module';
+import { AccountDeletionController } from './account-deletion.controller';
+import { AccountDeletionAdminController } from './account-deletion-admin.controller';
+import { AccountDeletionService } from './account-deletion.service';
+import { AccountDeletionRateLimitGuard } from './account-deletion-rate-limit.guard';
 
 @Module({
+  imports: [PlatformAdminModule],
   controllers: [
+    AccountDeletionController,
+    AccountDeletionAdminController,
     SignupController,
     LoginController,
     PasswordRecoveryController,
@@ -26,6 +34,8 @@ import { TransactionPinService } from './transaction-pin.service';
     MeController,
   ],
   providers: [
+    AccountDeletionService,
+    AccountDeletionRateLimitGuard,
     SignupService,
     LoginService,
     PasswordRecoveryService,

@@ -3,6 +3,11 @@ import { JwtService } from '@nestjs/jwt';
 import { AdminJwtGuard } from './admin-jwt.guard';
 import { UserJwtGuard } from './user-jwt.guard';
 import { PartnerJwtGuard } from './partner-jwt.guard';
+import { PrismaService } from '../../prisma/prisma.service';
+
+const activeUserPrisma = {
+  user: { findUnique: jest.fn().mockResolvedValue({ status: 'ACTIVE' }) },
+} as unknown as PrismaService;
 
 const jwtService = new JwtService({ secret: 'test-secret-test-secret-test-secret-32' });
 
@@ -14,7 +19,9 @@ interface FakeRequest {
 }
 
 function buildContext(token?: string): { context: ExecutionContext; request: FakeRequest } {
-  const request: FakeRequest = { headers: { authorization: token ? `Bearer ${token}` : undefined } };
+  const request: FakeRequest = {
+    headers: { authorization: token ? `Bearer ${token}` : undefined },
+  };
   const context = {
     switchToHttp: () => ({ getRequest: () => request }),
   } as unknown as ExecutionContext;
@@ -46,7 +53,7 @@ describe('AdminJwtGuard / UserJwtGuard / PartnerJwtGuard', () => {
   });
 
   it('UserJwtGuard aceita type=user e anexa request.user', async () => {
-    const guard = new UserJwtGuard(jwtService);
+    const guard = new UserJwtGuard(jwtService, activeUserPrisma);
     const token = await jwtService.signAsync({ sub: 'user-1', type: 'user' });
     const { context, request } = buildContext(token);
 
@@ -55,7 +62,7 @@ describe('AdminJwtGuard / UserJwtGuard / PartnerJwtGuard', () => {
   });
 
   it('UserJwtGuard rejeita token com type=admin', async () => {
-    const guard = new UserJwtGuard(jwtService);
+    const guard = new UserJwtGuard(jwtService, activeUserPrisma);
     const token = await jwtService.signAsync({
       sub: 'admin-1',
       organizationId: 'org-1',
