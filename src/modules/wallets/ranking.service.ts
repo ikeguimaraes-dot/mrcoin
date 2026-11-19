@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { ForbiddenException, Injectable } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { getUtcMonthRange } from '../../common/date/utc-month-range.util';
 import { MembershipNotFoundException } from './exceptions/membership-not-found.exception';
@@ -44,6 +44,24 @@ interface RosterEntry {
 export class RankingService {
   constructor(private readonly prisma: PrismaService) {}
 
+  async getConsent(userId: string, organizationId: string) {
+    const membership = await this.prisma.membership.findFirst({
+      where: { userId, organizationId, status: 'ACTIVE' },
+      select: { rankingConsent: true },
+    });
+    if (!membership) throw new MembershipNotFoundException();
+    return membership;
+  }
+
+  async setConsent(userId: string, organizationId: string, rankingConsent: boolean) {
+    const result = await this.prisma.membership.updateMany({
+      where: { userId, organizationId, status: 'ACTIVE' },
+      data: { rankingConsent },
+    });
+    if (!result.count) throw new MembershipNotFoundException();
+    return { rankingConsent };
+  }
+
   async getRanking(userId: string, organizationId: string, period?: string): Promise<RankingResult> {
     const roster = await this.prisma.membership.findMany({
       where: { organizationId, status: 'ACTIVE' },
@@ -55,10 +73,12 @@ export class RankingService {
       throw new MembershipNotFoundException();
     }
 
+    if (!currentMembership.rankingConsent) throw new ForbiddenException();
+
     const reference = this.resolveReferenceDate(period);
     const { monthStart, monthEnd } = getUtcMonthRange(reference);
 
-    const membersWithWallet = roster.filter((m): m is typeof m & { wallet: NonNullable<(typeof m)['wallet']> } => m.wallet !== null);
+    const membersWithWallet = roster.filter((m): m is typeof m & { wallet: NonNullable<(typeof m)['wallet']> } => m.wallet !== null && m.rankingConsent);
     const walletIds = membersWithWallet.map((m) => m.wallet.id);
 
     const [creditRows, reversalRows] = await Promise.all([

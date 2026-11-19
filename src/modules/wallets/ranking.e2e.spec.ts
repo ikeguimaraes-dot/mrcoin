@@ -67,7 +67,7 @@ async function createOrg(): Promise<{ id: string }> {
 
 async function createMember(
   organizationId: string,
-  overrides: { status?: 'ACTIVE' | 'INACTIVE' } = {},
+  overrides: { status?: 'ACTIVE' | 'INACTIVE'; consent?: boolean } = { consent: true },
 ): Promise<{ userId: string; walletId: string; membershipId: string; name: string }> {
   const cpf = randomCpf();
   const suffix = randomUUID();
@@ -78,7 +78,7 @@ async function createMember(
   createdUserIds.push(user.id);
 
   const membership = await prisma.membership.create({
-    data: { userId: user.id, organizationId, type: 'CUSTOMER', status: overrides.status ?? 'ACTIVE' },
+    data: { userId: user.id, organizationId, type: 'CUSTOMER', rankingConsent: overrides.consent, status: overrides.status ?? 'ACTIVE' },
   });
   const wallet = await prisma.wallet.create({ data: { membershipId: membership.id } });
 
@@ -136,6 +136,26 @@ afterAll(async () => {
 });
 
 describe('GET /ranking', () => {
+  it('excludes members until consent and removes them on withdrawal', async () => {
+    const org = await createOrg();
+    const observer = await createMember(org.id);
+    const member = await createMember(org.id, {});
+    const token = await tokenFor(member.userId);
+    const observerToken = await tokenFor(observer.userId);
+    const preference = () => request(server).put('/ranking/consent')
+      .query({ organizationId: org.id }).set('Authorization', `Bearer ${token}`);
+    const names = async () => {
+      const res = await getRanking(observerToken, org.id);
+      expect(res.status).toBe(200);
+      return (res.body as RankingResponseBody).items.map(item => item.name);
+    };
+    expect(await names()).not.toContain(member.name);
+    await preference().send({ rankingConsent: true }).expect(200);
+    expect(await names()).toContain(member.name);
+    await preference().send({ rankingConsent: false }).expect(200);
+    expect(await names()).not.toContain(member.name);
+  });
+
   it('top 10 correto e ordenado por coins ganhos desc', async () => {
     const org = await createOrg();
     const members = [];

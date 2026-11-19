@@ -359,6 +359,7 @@ model Device {
 /// Vínculo entre um User e uma Organization. Cada Membership tem sua
 /// própria Wallet — coins de organizações diferentes nunca se misturam.
 model Membership {
+  rankingConsent Boolean @default(false)
   id             String           @id @default(cuid())
   userId         String
   user           User             @relation(fields: [userId], references: [id])
